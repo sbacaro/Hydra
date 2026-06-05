@@ -1,0 +1,633 @@
+# Changelog
+
+All notable changes to Hydra are documented here.
+
+## [0.15.1 beta] — 2026-06-04
+
+### Performance (user report: HydraApp at 100% CPU)
+- **The grid no longer observes the 10 Hz meters.** Signal LEDs are now tiny
+  leaf views (SignalDot) — meter ticks re-render four-pixel dots instead of
+  rebuilding the entire grid (groups + Canvas) up to ten times a second.
+- **Cell lookups are a Set, not a filter**: the Canvas used to scan the
+  connection array per cell per repaint (O(cells × connections) on every
+  hover move); now it's one Set built per pass, O(1) per cell.
+- **The daemon skips identical meter broadcasts**: an idle system sends
+  nothing — no JSON encoding, no app wake-ups. Real audio changes every
+  tick, so meters lose nothing.
+
+## [0.15.0 beta] — 2026-06-04
+
+### Changed — grid clarity, Hydra style (user direction)
+- **Device bars** on both axes, like Dante Controller but in our language:
+  the device/interface name lives in a solid rounded bar (icon + name),
+  channels indent beneath it. Column device names are fully vertical (90°)
+  inside their bars — no more diagonal overflow or truncated headers.
+- **Visible lattice**: every cell shows a hairline edge, so the field reads
+  as a patch matrix even when empty; thin separator lines mark where one
+  device ends and the next begins (lines, not bands — cells stay cells).
+- Channel column labels rotated to vertical as well; crosshair highlight
+  slightly stronger.
+- Grid panel clips with its rounded shape (nothing can draw outside the
+  square); Channel panel is now a matching card with the same vertical span
+  as the grid square.
+
+## [0.14.4 beta] — 2026-06-04
+
+### Changed (user feedback)
+- Channel panel type raised to the app ramp (labels 13 pt, title 14 pt) —
+  no more shrunken side panel.
+- "Remove N patches" pill calmed down: neutral colors, fixed label
+  "Remove patch" (count lives in the tooltip), ⌫ still works.
+
+### Changed (user feedback — device clarity, Dante Controller style)
+- **Every group now says what it IS**: a kind icon on row labels, column
+  headers and list sections — virtual interface, app capture (e.g. Safari),
+  audio interface, AES67 stream, NDI source — with the kind spelled out in
+  the tooltip.
+- (Reverted in the same build: cell-field zebra/bands made collapsed group
+  columns look like dead cells and squeezed the rotated headers — the
+  original cell design is back. Device kind lives in the row icons and
+  tooltips only.)
+
+## [0.14.3 beta] — 2026-06-04
+
+### Added (user request — Dante Controller workflow)
+- **Batch patching in list view**: in the source picker, ⇧-click selects a
+  contiguous range of transmitter channels (⌘-click toggles single ones);
+  "Patch N channels" assigns them to consecutive receiver channels starting
+  at the clicked row — bounded by the receiver's interface/device, exactly
+  like assigning a multichannel device in Dante Controller's Device View.
+  A plain click still patches one source instantly.
+
+## [0.14.2 beta] — 2026-06-04
+
+### Fixed
+- **Trackpad scroll in the grid**: the inner pane was sized by its content
+  (a 128-row label stack), so the cell ScrollView thought everything was
+  visible and had nothing to scroll. The pane is now hard-bounded to the
+  viewport; two-finger scrolling pans the cell field with frozen headers.
+
+### Changed (user request — Dante Controller convention)
+- **Transmitters on top, receivers on the left**: sources (interface Ins,
+  captured apps, NDI/AES67 streams, device inputs) are now the COLUMNS;
+  destinations (interface Outs, device outputs) are the ROWS. Corner reads
+  RX ▼ · TX ▶; signal LEDs, crosshair, selection and double-click follow.
+
+## [0.14.1 beta] — 2026-06-04
+
+### Fixed
+- Big interfaces (e.g. 128×2) no longer blow up the window layout: the grid
+  pane is pinned to the top-left of its area and the channels scroll INSIDE
+  it with frozen headers, as designed.
+
+### Changed (user request)
+- **"Groups" toggle** above the grid: ON = channels banked in collapsible
+  groups of 8 (collapsed by default, "Collapse all" available) — the right
+  mode for 64/128-channel interfaces; OFF (default) = flat list, one header
+  per node. Preference persists.
+
+## [0.14.0 beta] — 2026-06-04
+
+### Added — AES67 TX (Phase 5, first slice; user request)
+- **A virtual interface can be announced on the network**: the AES67 toggle
+  (on the interface row, or at creation — the AES67 template ships with it
+  ON) announces the Out side via SAP/SDP and transmits multicast RTP
+  (L24, 1 ms packets, 239.69.x.y:5004, up to 8 channels per flow). It
+  appears in Dante Controller as an AES67 flow. EXPERIMENTAL: no PTP sync
+  yet, so strict receivers may refuse to lock — that's the remainder of
+  Phase 5.
+
+### Changed — Network tab is now a real network view
+- NDI sources show format (channels @ rate) and address; AES67 device notes
+  shortened to status.
+- New "Hydra on the network" section: every flow Hydra is transmitting
+  (AES67 with group:port, NDI) with live status.
+- Instructional texts moved into clickable ⓘ balloons (Apple style) —
+  headers stay clean, the help is one click away.
+
+## [0.13.1 beta] — 2026-06-04
+
+### Changed (user feedback)
+- **Type scale raised ~2 pt across the app** to match the macOS system ramp
+  (body 13 pt): channel labels 11→13, lists 12–13, status bar 13, notes 11,
+  micro-labels 10 minimum. Grid metrics follow (rows/cells 30 pt, label
+  column 150 pt, header 72 pt); top/status bars and the channel panel got
+  proportionally taller/wider.
+- ⌥-click on the gain fader snaps it to 0 dB (Logic behavior).
+- Strip-path diagnostics in the daemon log (in/out dBFS per chain, rerouted
+  connection counts) to pinpoint the "EQ changes are inaudible" report.
+
+## [0.13.0 beta] — 2026-06-04
+
+### Changed — Settings restyled (user feedback)
+- Settings (⌘,) now follows the app: Logic Pro-style preferences with icon
+  tabs in the toolbar (General / Audio / Control), dark theme, same accent.
+
+### Changed — interface creation (user feedback)
+- **Type-first creation**: pick a template (Custom, DAW, OBS, AES67, NDI)
+  and the form pre-fills name, channel counts and NDI TX — everything still
+  editable. No more blank-page moment.
+- **Independent In × Out sizing**: an interface now has separate input and
+  output channel counts (e.g. an AES67 return of 128 in × 2 out). Each side
+  gets its own exclusive slice of the 256-channel pool — slices never alias
+  across directions, so the driver loopback can't create hidden couplings.
+  NDI TX and recording use the Out side. Old interfaces.json files load
+  unchanged (legacy = same size both ways).
+
+## [0.12.1 beta] — 2026-06-04
+
+### Added (user requests)
+- **Multi-selection + ⌫**: ⌘/⇧-click selects several cells in the grid;
+  the control bar shows "Remove N patches" and the Delete key (⌫) removes
+  every patched connection in the selection.
+- **List patching** (Dante Controller Device-View style): a Grid/List
+  toggle above the grid. List mode shows every destination channel as a
+  row — current sources appear as chips (✕ removes; click selects for the
+  channel strip) and "+" opens a searchable source picker.
+
+## [0.12.0 beta] — 2026-06-04
+
+### Added
+- **OSC remote control** (Settings → Control, off by default): UDP server in
+  the daemon for consoles, TouchOSC and Stream Deck via Companion.
+  Addresses: `/hydra/scene/apply` (name or index), `/hydra/scene/save`,
+  `/hydra/record/start`, `/hydra/record/stop` (interface name). OSC 1.0
+  parser in HydraCore, unit-tested (messages + bundles).
+- **Recording**: the record button on a virtual interface captures whatever
+  is routed to its Out channels into a WAV (float32, engine rate) in
+  Music → Hydra Recordings. Engine side reuses the NDI TX slice-copy path.
+  Deleting an interface stops its recording.
+- **About / legal overhaul** (GPL §5d Appropriate Legal Notices): license
+  statement + warranty disclaimer, GPL full-text and source-code links,
+  credits with trademark notices — BlackHole (GPL-3.0), Steinberg VST 3 SDK
+  (GPLv3 option, VST® trademark), NDI® (Vizrt trademark, runtime never
+  bundled), AES67/OSC as from-scratch open standards, Dante®/Audinate
+  non-affiliation. THIRD_PARTY_NOTICES.md updated to match.
+
+### Changed (by user feedback)
+- **Status moved to the bottom bar**: the top bar keeps only the brand and
+  the event bell; daemon/backplane/engine now live in the status bar with
+  the connection/rate readout — one type size (11 pt), consistent casing,
+  no more duplicated info in two places.
+- Channel panel slimmed (270 → 248 pt) so the grid keeps visual priority.
+- **Grid collapse removed** — it got in the way. All channels are always
+  visible; group labels remain as static section headers. The virtual
+  interface model keeps the channel set small, so collapsing lost its
+  purpose. "Clear visible" now means everything shown in the grid.
+
+### Fixed
+- Settings toggles now mutate a config copy — changing one option no longer
+  resets the others.
+- Hydra's internal tap aggregates ("Hydra Tap (Safari)") no longer leak into
+  the Devices list — internal plumbing is filtered by UID prefix.
+
+## [0.11.0 beta] — 2026-06-04
+
+### Added — NDI RX + TX (user decision: real NDI, now)
+- **NDI receive**: sources on the network appear in the sidebar (Network →
+  NDI sources); subscribing adds their channels to the grid as inputs.
+  Format (channels/rate) is learned from the first audio frame — the source
+  joins the engine only then, through the same ring + ASRC path as AES67.
+- **NDI transmit**: any virtual interface can broadcast — toggle the antenna
+  on its row (or at creation). Whatever you route to the interface's Out
+  channels goes out as an NDI audio source named after it. Engine side: a
+  post-mix copy of the interface's pool slice feeds a sender thread.
+- **Licensing (GPL-safe, DistroAV pattern)**: the proprietary NDI runtime is
+  never bundled or linked. HydraNDIShim (new C target) dlopen()s the runtime
+  installed from Vizrt's official redistributable; `vm_install.sh` now
+  downloads/installs it automatically from the official link. Without it,
+  the app shows "runtime not installed" + a download link, and everything
+  else keeps working.
+- Naming an interface "NDI 6" in 0.10.0 was organizational — now it's real.
+
+## [0.10.0 beta] — 2026-06-04
+
+### Added — Virtual interfaces (user proposal)
+- **The app starts with zero channels; you build your own set.** The raw
+  256-channel pool is now invisible. You create named virtual interfaces
+  (e.g. "AES67 Stage 32", "OBS 2") and each one allocates a contiguous
+  slice of the pool — only those channels appear in the grid.
+- Create via the "+ Interface" button above the grid or in the sidebar
+  (Devices → Virtual interfaces); 1–64 channels each, daemon allocates and
+  persists (interfaces.json). Deleting frees the slice and removes its
+  patches. Pool usage indicator (n / 256).
+- Empty grid shows an onboarding hint instead of hundreds of unused lanes.
+- The Settings "channels shown in the grid" picker is gone — superseded by
+  this model. Naming an interface "NDI 6" is organizational for now: NDI
+  transport itself remains a future extension.
+
+## [0.9.3 beta] — 2026-06-04
+
+### Changed (by user feedback)
+- **One font everywhere**: SF Pro across the whole UI; numbers use
+  monospaced DIGITS only (alignment without changing typeface).
+- **All channels are MONO** — the stereo lane option is disabled (it had
+  routing bugs); apps appear as two mono lanes (L/R). The strip lost the
+  Mono/Stereo toggle.
+- **Pagination replaced by collapsible groups of 8** (user proposal): the
+  whole system is visible at once as group headers; expand only where you
+  work. Headers stay frozen to the top-left like Dante Controller; the cell
+  field is a single Canvas, so even fully expanded it stays fast.
+  "Clear visible" now acts on the expanded channels.
+- Grid is anchored to the top-left corner of its area.
+- Settings gained **App capture → makeup gain** (0–24 dB, daemon-side,
+  persisted): the calibration for quiet app captures now lives in the UI.
+
+## [0.9.2 beta] — 2026-06-04
+
+### Added (by user feedback)
+- **Settings window (⌘,)**: choose how many Hydra Soundcard channels appear
+  in the grid (16–256; the driver keeps 256, patches outside the range keep
+  working) and toggle **Feedback protection** (daemon-side, persisted).
+- **Clear page** button: removes every connection in the visible 16×16 block
+  only, with confirmation.
+- **Resizable sidebar**: drag the divider (180–380 px) — long names stop
+  truncating.
+
+### Changed
+- Plugins tab removed from the sidebar (plugins are picked in the channel
+  strip's Insert slot, where they belong).
+- Trackpad feedback now ticks continuously while dragging the gain fader,
+  with the stronger detent kept at 0 dB.
+- Brand area: bigger mark + "Hydra Soundcard" title.
+- Grid pagers renamed to "INPUTS (ROWS)" / "OUTPUTS (COLUMNS)" with clearer
+  tooltips; channel labels got ~50% more room.
+
+## [0.9.1 beta] — 2026-06-04
+
+### Added (by user feedback)
+- **Feedback protection**: the engine rejects connections that would create a
+  loop on the loopback backplane (including In n → Out n and indirect cycles
+  through other connections), and skips them when applying scenes — with a
+  warning explaining why.
+- **Events & alerts**: the daemon now emits user-relevant events — feedback
+  blocked, device disconnected/re-bound, app-capture permission failures,
+  plugin load failures. They appear as discreet transient **toasts**
+  (top-right, 5 s) and stay in the **bell menu** in the top bar (last 50,
+  with timestamps; the bell shows a badge while warnings/errors are present).
+- **Device View in the sidebar**: lists now show only what matters
+  (status dot, name, toggle); clicking an item opens its full specifications
+  (channels, sample rate, UID, bundle ID, multicast address…) with the
+  action toggle — Dante Controller style.
+
+### Changed
+- **Grid: double-click to assign / double-click to remove.** Single click
+  now only selects the cell (opens the channel strip) — no more accidental
+  patches while inspecting.
+
+## [0.9.0 beta] — 2026-06-04
+
+### Changed (final redesign — based on the user's approved Figma prototype)
+- **New shell**: deep blue-black gradient with subtle ambient glows, custom
+  top bar (the brand mark keeps its indigo gradient — the rest of the UI uses
+  Apple system blue), status pills with real daemon/backplane/engine state,
+  and a bottom status bar (real data only: connections, sample rate, format).
+- **Sidebar with tabs** (Devices / Apps / Network / Plugins) replaces the
+  popovers; every section has an ⓘ hover explanation, every tool a tooltip.
+- **Paginated grid, 16×16 lanes per page** — the fix for big channel counts:
+  the grid is fixed-size (headers frozen by construction, like Dante
+  Controller) and at most 256 cells exist at once, so 256×256 can never slow
+  the UI. Per-axis pagers with a jump-to-device/app menu. Cells in the
+  prototype's style: glowing blue squares, ghost hover outline, row/column
+  crosshair. Click toggles the subscription; ⌥-click inspects.
+- **Logic Pro-style VU meter** in the channel strip: vertical segmented LED
+  bars — two bars when the cell is a stereo group — with peak-hold lines and
+  click-to-reset clip LEDs.
+- **Trackpad haptics on the gain fader**: Logic-style detent pulse when
+  crossing 0 dB (NSHapticFeedbackManager).
+- Still pending from this spec: list-style channel assignment (Dante Device
+  View mode), CPU/XRUN metrics in the status bar (daemon support first —
+  no fake numbers), ⌘K palette.
+
+## [0.8.2 beta] — 2026-06-04
+
+### Changed (mono/stereo is now real — by user feedback)
+- **Stereo lanes in the grid**: toggling Stereo on the channel strip collapses
+  the pair into ONE row and ONE column ("In 1-2" / "Out 1-2"); captured apps
+  are a single lane named after the app. One click patches the whole lane
+  with console rules: stereo→stereo = L→L/R→R · stereo→mono = both summed ·
+  mono→stereo = duplicated (badge in the strip shows which rule applied).
+- Cell gain and meter operate the channel group (meter shows the pair's max);
+  removing a cell removes all its underlying connections.
+- Engine unchanged — connections stay per-channel under the hood, so scenes
+  and persistence keep working.
+
+## [0.8.1 beta] — 2026-06-04
+
+### Changed (by user feedback)
+- **Trim removed from the channel strip** — redundant with the per-connection
+  Gain, which is the foundational model ("every connection carries a gain").
+  One level control per view: the strip handles inserts; the output section
+  handles level. (The protocol field remains, defaulting to unity.)
+
+## [0.8.0 beta] — 2026-06-04
+
+### Changed (Logic-style channel strips — UI milestone, part 1)
+- **The side panel is now a DAW channel strip** for the selected source,
+  top-to-bottom: input (name + **Mono/Stereo** toggle; apps are stereo by
+  default and locked), **Audio FX insert slots** (click an empty slot to
+  search plugins by name; click a loaded slot to open its editor; ✕ removes),
+  channel **Trim** (±24 dB, pre-inserts), then the output section for the
+  selected connection (gain, dBFS meter, remove).
+- **Inserts live on the channel now** (Logic semantics): everything leaving
+  that source passes through its inserts before reaching any destination.
+  Stereo strips process the L/R pair together in the same plugin instances.
+- **"Chains" are gone** from the UI and protocol (VST popover removed; the
+  per-connection Insert picker removed). Strips persist (`strips.json`) and
+  re-bind by node+channel. Protocol: `strips`/`setStrip`;
+  `openPluginEditor` now takes (stripID, slot index).
+
+## [0.7.2 beta] — 2026-06-04
+
+### Added
+- **Plugin editor windows**: click a plugin's name in the VST popover to open
+  its real GUI. Parameter changes flow from the editor to the audio thread
+  through a lock-free queue, so tweaks are audible live. Implementation:
+  EditController instantiation + component↔controller connection + state sync,
+  IPlugView hosted in an NSWindow inside the daemon (which now runs an
+  accessory NSApplication loop so editors receive input). Closing the window
+  hides it; reopening refocuses it.
+
+### Coming next (Logic-style mixer milestone)
+- The "chains" concept will dissolve into per-channel insert slots
+  (mono/stereo channels, searchable plugin picker, side panel as a DAW
+  channel strip with top-to-bottom signal flow) — design agreed, in progress.
+
+## [0.7.1 beta] — 2026-06-04
+
+### Changed (by user feedback)
+- **VST chains are now console-style inserts, not grid channels.** Select an
+  existing connection and pick the chain under **Insert** in the Inspector —
+  the connection's audio passes through the chain (even source channels → L,
+  odd → R; the meter reads post-insert). No more separate chain rows/columns
+  in the grid. The VST popover remains the chain library (create/delete
+  chains, add/remove plugins).
+Format: [Keep a Changelog](https://keepachangelog.com). Versioning: `major.minor.patch` + stage.
+
+## [0.7.0 beta] — 2026-06-04
+
+### Added (Phase 6 — VST3 in the signal path)
+- **VST3 effect chains as grid nodes**: create a chain in the new **VST**
+  popover, add plugins from `/Library/Audio/Plug-Ins/VST3` (system + user),
+  then patch any source → chain input (→name) and chain output (name→) →
+  any destination. Empty chains pass audio through.
+- **Engine**: chains process INSIDE the engine callback (same clock domain —
+  no rings, no added latency) with two-pass mixing: sources → chain inputs,
+  chains render, chain outputs → destinations. v1: stereo chains, no
+  chain→chain patching, plugins at default state (editor GUI ships with the
+  UI-redesign milestone).
+- **HydraVST**: new C++ target hosting the Steinberg **VST3 SDK (GPLv3
+  option)**, fetched at build time by `Scripts/fetch_vst3sdk.sh` into
+  `ThirdParty/`; pure-C surface so Swift stays clean. Notices updated.
+- Protocol: `getVST` / `vst` / `createChain` / `deleteChain` / `addPlugin` /
+  `removePlugin`; chains persist (`vstchains.json`).
+
+## [0.6.0 beta] — 2026-06-04
+
+### Added (Phase 4 — AES67 reception, "the Controller")
+- **Network discovery** (Section 5.5): passive mDNS browsing of Dante
+  `_netaudio-*` services (presence) + SAP listener on 239.255.255.255:9875
+  parsing SDP (available streams). Cross-referenced badges per device:
+  **AES67 On** (announcing, subscribable) / **AES67 Offline** (present, enable
+  AES67 in Dante Controller).
+- **Stream subscription (RX)**: subscribing joins the stream's multicast
+  group, parses RTP (L24/L16 big-endian → Float32) and feeds the engine
+  through the same ring/ASRC path as physical devices — no PTP needed for
+  reception. Subscribed channels appear as grid sources.
+- **New "Network" popover** with devices, badges and stream toggles;
+  subscriptions persist (`aes67.json`) and re-bind when streams re-announce.
+- SAP/SDP parsers are pure functions in HydraCore with unit tests (runnable
+  without Dante hardware).
+- **Field testing pending** — requires a Dante device with AES67 enabled and
+  bridged VM networking; full checklist in the README.
+
+## [0.5.7 beta] — 2026-06-04
+
+### Changed (driver V5 — the app is the only control surface)
+- **Hydra device icon**: the backplane now ships with the Hydra logo
+  (indigo waveform; `Backplane/HydraIcon.iconset` packed at build time).
+- **Zero editable controls in Audio MIDI Setup**: clock source and pitch
+  controls unpublished (volume/mute already were), and the device exposes a
+  **single fixed sample rate (48 kHz)** — the format dropdown has one option.
+  Everything about the backplane is controlled from the Hydra app only.
+  Requires reinstalling the driver.
+
+## [0.5.6 beta] — 2026-06-04
+
+### Changed
+- **System volume slider fully locked for the backplane**: the driver no
+  longer publishes ANY volume/mute controls (entries removed from its object
+  lists), so macOS greys the slider out — the user cannot even try to attenuate
+  or mute the backplane. Mute-setter neutralization kept as belt-and-suspenders.
+  Requires reinstalling the driver.
+- **App-tap makeup raised to +12 dB** (`Hydra.appTapMakeupDB`, single
+  calibration constant): the tap mixdown attenuation is undocumented and the
+  Inspector meter isn't trusted for calibration yet, so this is an approximate
+  value — adjust in one place if captures still don't match interface levels.
+
+## [0.5.5 beta] — 2026-06-04
+
+### Fixed
+- **Mute locked off**: with volume control gone (0.5.4), the system slider at
+  zero still engaged the driver's mute control and cut the loopback. The mute
+  setter is now neutralized in the driver build — the backplane is fully
+  immune to macOS volume/mute. Requires reinstalling the driver.
+
+## [0.5.4 beta] — 2026-06-04
+
+### Changed
+- **Backplane is now bit-perfect**: the driver is built with volume control
+  disabled (`kEnableVolumeControl=false`), so the system volume slider can no
+  longer attenuate audio entering the grid. Level control belongs to the
+  per-connection gain. Requires reinstalling the driver
+  (`host_build.sh` re-clones BlackHole and applies the V2 overrides
+  automatically).
+
+## [0.5.3 beta] — 2026-06-04
+
+### Fixed
+- **App capture level, take two.** Field testing showed tap level does NOT
+  follow the output volume knob (the driver applies volume after the tap
+  point), so 0.5.1's dynamic volume compensation inverted the problem and was
+  removed. The real cause of quiet captures is the tap's stereo-mixdown
+  pan-law attenuation: app taps now get a fixed **+6 dB makeup**, matching
+  soundcard-routing levels at any system volume.
+
+## [0.5.2 beta] — 2026-06-04
+
+### Fixed
+- **Apps show their commercial identity**: processes are attributed to their
+  responsible app (macOS responsibility lookup) — "Safari Graphics and Media
+  (com.apple.WebKit.GPU)" becomes **Safari**, Chrome helpers become
+  **Google Chrome**. Helper-suffix stripping fixed and kept as fallback.
+- Note: apps captured under helper identities in 0.5.x need re-enabling once
+  (the persisted ID changed to the responsible app's bundle ID).
+
+## [0.5.1 beta] — 2026-06-04
+
+### Fixed
+- **One grid node per app**: browser helper processes (e.g. Chrome's) share a
+  bundle-ID variant and showed up as duplicate, mirrored rows. Processes are
+  now grouped under a canonical bundle ID (".helper…" stripped); the tap mixes
+  all of the app's processes and is rebuilt transparently when helpers
+  spawn/die.
+- **Capture level no longer follows the system volume knob**: process taps are
+  post-output-volume, so captures came in quiet. The daemon now watches the
+  default output device's volume and applies the inverse (makeup clamped at
+  +30 dB) to every app tap — captured level stays constant.
+
+## [0.5.0 beta] — 2026-06-04
+
+### Added (Phase 3 — Per-app capture, process taps)
+- **Capture any app's audio** without touching its output device: the new
+  **Apps** popover lists audio-capable apps (live "playing" indicator);
+  toggling capture makes the app a **stereo source** in the grid (L/R rows).
+- Implementation: Core Audio **process tap** (macOS 14.4+ API) → private
+  drift-compensated aggregate device → IOProc → the same ring/ASRC path used
+  by physical devices (engine taps generalized to a common protocol).
+- **Identity & re-bind**: captured apps persist by bundle ID (`apps.json`);
+  quitting and relaunching the app re-binds its patch automatically.
+- **TCC**: the daemon embeds NSAudioCaptureUsageDescription; macOS prompts on
+  first capture (System Settings → Privacy & Security → Screen & System Audio
+  Recording, if it needs enabling manually).
+- Protocol: `getApps` / `apps` / `setAppCapture`.
+
+## [0.4.0 beta] — 2026-06-04
+
+### Added (Phase 2b — Physical devices + drift correction)
+- **Physical devices in the grid**: any connected interface can be opted in
+  via the new **Devices** popover. Used devices get their own IOProc; their
+  inputs become grid sources and outputs become destinations (highlighted in
+  the grid with the accent color).
+- **ASRC / drift correction** (Section 5.4): per device and direction, an SPSC
+  ring buffer with consumer-side resampling — fractional read position whose
+  rate follows producerRate/consumerRate trimmed by a fill-level servo
+  (±0.2% max), so independent clocks never accumulate into clicks. Linear
+  interpolation (honest v1; upgradeable to polyphase without API changes).
+- **Hot-plug + re-bind** (Section 7.8): devices are tracked by stable Core
+  Audio UID; a used device that disappears keeps its connections in the
+  matrix and re-binds automatically when it returns. Listener on
+  kAudioHardwarePropertyDevices broadcasts changes live.
+- **Engine generalized**: snapshot connections now resolve to
+  (buffer, channel) across the backplane ABL and device stagings; the
+  backplane IOProc stages resampled device inputs, mixes, and feeds device
+  output rings — one clock domain crossing per device, all lock-free.
+- Protocol: `getDevices` / `devices` / `setDeviceUse`; used devices persisted
+  (`devices.json`).
+- **You can now hear the grid**: route any source to a real output device
+  (e.g. the Mac's speakers — that's also the monitor path groundwork).
+
+## [0.3.3 beta] — 2026-06-04
+
+### Changed
+- **Grid reverted to the stable 0.2.0 layout** by project decision: channel
+  count picker (8–64), click to connect + select, removal via Inspector button
+  or context menu. The Dante Controller-style grid (frozen headers, hover
+  crosshair, toggle-click, banks, LEDs, keyboard, Active filter) returns in
+  the UI-polish phase, rebuilt on a solid base.
+- Kept from 0.2.1–0.3.2: the **dBFS meter with clip latch**, **scenes in the
+  menu bar**, and all daemon-side features (labels, per-channel meters,
+  scenes protocol) — they stay functional and wait for their UI.
+
+## [0.3.2 beta] — 2026-06-04
+
+### Added
+- **Active filter (default)**: the grid opens showing only channels that
+  matter — with connections, labels, or that carried signal this session
+  (sticky, so rows don't vanish when audio pauses). "All" exposes the full
+  256-pool in banks. A search field narrows either mode by label or number.
+  (Section 7.5: "born small and focused".)
+
+### Fixed
+- **Row misalignment**: the cell field is now a single Canvas (immediate-mode
+  drawing) — headers and cells share the same layout math, so rows and columns
+  can never drift, and redraws stay fast even fully expanded.
+- Cell interactions on the canvas: click toggles, **⌥-click inspects**
+  (replaces the per-cell context menu), hover crosshair unchanged.
+
+## [0.3.1 beta] — 2026-06-04
+
+### Fixed
+- **UI freeze with the full grid + meters** (0.3.0 regression). The 10 Hz meter
+  broadcast, hover and scroll were each invalidating every grid cell (~2,300
+  views). Render path rebuilt: Equatable cells (only changed cells repaint),
+  meters/LEDs moved to dedicated observable objects (LEDs publish only on
+  threshold transitions), O(1) connection lookup, and scroll offset isolated so
+  scrolling repaints only the pinned headers.
+
+## [0.3.0 beta] — 2026-06-04
+
+### Added
+- **Editable channel labels** (Section 7.7, anticipated from Phase 7):
+  double-click any header to rename ("Mic Host"); persisted by the daemon
+  apart from system IDs; shared live across clients.
+- **Keyboard navigation**: arrows move a grid cursor, Space toggles the
+  connection, ⏎ opens it in the Inspector, Esc clears the cursor.
+- **Per-channel signal LEDs** in headers (green = signal above -50 dBFS),
+  fed by new per-channel input/output peaks computed in the engine — find
+  where audio lives before patching, even with zero connections.
+- **1:1 identity patch** between banks of 8 (with a guard against patching a
+  bank onto itself, which feeds back on a loopback device).
+- **Scenes** (anticipated from Phase 7): save the current matrix under a name,
+  apply atomically (single snapshot swap — no audible intermediate states),
+  delete; persisted by the daemon. Quick-switch via the new **menu bar panel**
+  (status + scenes + save field), per Section 7.3.
+- Protocol: `labels`/`setLabel`, `scenes`/`saveScene`/`applyScene`/`deleteScene`,
+  and `levels` extended with per-channel source/destination peaks.
+
+## [0.2.1 beta] — 2026-06-04
+
+### Changed (grid UX, Dante Controller-style)
+- **Frozen headers**: row labels and column numbers stay pinned while the cell
+  area scrolls (synced via scroll geometry).
+- **Hover crosshair**: the row/column under the pointer highlight, with a live
+  "In X → Out Y" readout in the grid header.
+- **Click = subscribe / click again = unsubscribe.** Remove button dropped;
+  right-click → Inspect opens gain/meter (creating a connection also opens it).
+- **Collapsible banks of 8** per axis (default: first 16 channels visible),
+  with expand/collapse-all menu — scales to 256 channels and beyond.
+- **Device identity**: the device being patched is named in the grid header and
+  in the Inspector (groundwork for apps with icons in Phase 3).
+- **Real dBFS meter**: -60…+6 scale with 0 dBFS tick, green/yellow/red zones,
+  numeric readout and a click-to-reset **CLIP latch** — you can now tell
+  exactly when the post-gain peak crosses 0 dBFS.
+- Gain gets a "0 dB" reset shortcut.
+
+## [0.2.0 beta] — 2026-06-04
+
+### Added (Phase 2 — Grid engine)
+- **Audio engine**: IOProc attached to the backplane; the patch matrix is applied
+  to real audio with **per-connection gain** (vDSP mixing, lock-free snapshot
+  handoff to the audio thread, post-gain peak meters).
+- **Matrix persistence**: connections survive daemon restarts
+  (`~/Library/Application Support/Hydra/matrix.json`).
+- **Protocol**: `getMatrix` / `matrix` / `setConnection` / `removeConnection` /
+  `levels` messages; status now reports engine state.
+- **Grid UI**: cross-point matrix (8–64 visible channels), click to connect,
+  selection opens the **Inspector** (gain slider in dB, live meter, remove).
+- **Design**: macOS Tahoe **Liquid Glass** (glass chips, glass buttons);
+  deployment target bumped to macOS 26.
+- **About window**: GPL notice and third-party credits (BlackHole, VST3) moved
+  to About / Acknowledgements — removed from the main window footer.
+
+### Honest state
+- Phase 2 routes backplane channel → backplane channel only. Physical devices
+  (with ASRC) are Phase 2b; per-app capture is Phase 3; monitor/listen needs a
+  physical output path, so it ships with 2b — no placeholder button until then.
+
+## [0.1.0 beta] — Phase 1 verified on the test VM 2026-06-04
+
+## [0.1.0 beta] — 2026-06-04
+
+### Added (Phase 1 — Foundation)
+- Project skeleton (Swift Package Manager) with three targets:
+  - `HydraCore` — shared constants, data model and WebSocket message types (single source of truth).
+  - `hydrad` — minimal daemon: detects the backplane via Core Audio and serves a local WebSocket (`127.0.0.1:59731`).
+  - `HydraApp` — minimal SwiftUI app: connects to the daemon and shows daemon/backplane status (dark theme, indigo accent, English UI).
+- `Backplane/build_and_install.sh` — builds the 256×256 backplane ("Hydra Virtual Soundcard") from BlackHole source (SIP stays on).
+- Host/VM workflow: `Scripts/host_build.sh` (one command on the host: tests + driver + universal binaries → `dist/`) and `Scripts/vm_install.sh` (one command on the UTM VM, via SMB-shared folder: install driver + binaries, restart coreaudiod, verify).
+- `LICENSE` (GPL-3.0), `THIRD_PARTY_NOTICES.md` (BlackHole credited), this `CHANGELOG.md`.
+
+### Honest state
+- No audio routing yet — the patch matrix engine is Phase 2.
+- The app shows real status only (no decorative screens).
