@@ -34,10 +34,15 @@ let package = Package(
             name: "HydraNDIShim",
             path: "Sources/HydraNDIShim"
         ),
+        // Module ABI for VST3 plugin loading
+        .target(
+            name: "HydraModuleABI",
+            path: "Sources/HydraModuleABI"
+        ),
         // Background daemon: all audio/network work lives here.
         .executableTarget(
             name: "hydrad",
-            dependencies: ["HydraCore", "HydraVST", "HydraNDIShim"],
+            dependencies: ["HydraCore", "HydraVST", "HydraNDIShim", "HydraModuleABI"],
             path: "Sources/hydrad",
             exclude: ["Info.plist"],
             linkerSettings: [
