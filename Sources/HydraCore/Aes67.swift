@@ -14,12 +14,24 @@ public struct Aes67Device: Codable, Sendable, Equatable, Identifiable {
     /// False = "AES67 Offline": present, but AES67 mode is off on the device
     /// (enable it in Dante Controller — Hydra cannot do it remotely).
     public var aes67On: Bool
+    /// Channels advertised via `_netaudio-chan` ("NN@device" instances),
+    /// collapsed into this one device entry. 0 = unknown.
+    public var channels: Int
 
     public var id: String { name }
 
-    public init(name: String, aes67On: Bool) {
+    public init(name: String, aes67On: Bool, channels: Int = 0) {
         self.name = name
         self.aes67On = aes67On
+        self.channels = channels
+    }
+
+    private enum CodingKeys: String, CodingKey { case name, aes67On, channels }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        aes67On = try c.decodeIfPresent(Bool.self, forKey: .aes67On) ?? false
+        channels = try c.decodeIfPresent(Int.self, forKey: .channels) ?? 0
     }
 }
 
@@ -64,16 +76,33 @@ public struct Aes67TxInfo: Codable, Sendable, Equatable, Identifiable {
     public var channels: Int
     public var address: String
     public var port: UInt16
+    /// AES67 flows carry at most 8 channels — a wide interface is announced
+    /// as several flows ("Name 1–8", "Name 9–16", …). 0-based slice index.
+    public var flowIndex: Int
 
-    public var id: UUID { interfaceID }
+    public var id: String { "\(interfaceID.uuidString):\(flowIndex)" }
 
     public init(interfaceID: UUID, name: String, channels: Int,
-                address: String, port: UInt16) {
+                address: String, port: UInt16, flowIndex: Int = 0) {
         self.interfaceID = interfaceID
         self.name = name
         self.channels = channels
         self.address = address
         self.port = port
+        self.flowIndex = flowIndex
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case interfaceID, name, channels, address, port, flowIndex
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        interfaceID = try c.decode(UUID.self, forKey: .interfaceID)
+        name = try c.decode(String.self, forKey: .name)
+        channels = try c.decode(Int.self, forKey: .channels)
+        address = try c.decode(String.self, forKey: .address)
+        port = try c.decode(UInt16.self, forKey: .port)
+        flowIndex = try c.decodeIfPresent(Int.self, forKey: .flowIndex) ?? 0
     }
 }
 
@@ -83,20 +112,35 @@ public struct Aes67Payload: Codable, Sendable, Equatable {
     public var streams: [Aes67Stream]
     /// Hydra's own transmitters currently on the network.
     public var txFlows: [Aes67TxInfo]
+    /// PTP slave state (Phase 5): TX timestamps follow the network clock
+    /// when locked; unlocked TX free-runs (strict receivers may reject).
+    public var ptpLocked: Bool
+    /// Grandmaster identity ("XX-XX-…"), empty when none elected.
+    public var ptpGrandmaster: String
+    public var ptpDomain: Int
 
     public init(devices: [Aes67Device], streams: [Aes67Stream],
-                txFlows: [Aes67TxInfo] = []) {
+                txFlows: [Aes67TxInfo] = [], ptpLocked: Bool = false,
+                ptpGrandmaster: String = "", ptpDomain: Int = 0) {
         self.devices = devices
         self.streams = streams
         self.txFlows = txFlows
+        self.ptpLocked = ptpLocked
+        self.ptpGrandmaster = ptpGrandmaster
+        self.ptpDomain = ptpDomain
     }
 
-    private enum CodingKeys: String, CodingKey { case devices, streams, txFlows }
+    private enum CodingKeys: String, CodingKey {
+        case devices, streams, txFlows, ptpLocked, ptpGrandmaster, ptpDomain
+    }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         devices = try c.decode([Aes67Device].self, forKey: .devices)
         streams = try c.decode([Aes67Stream].self, forKey: .streams)
         txFlows = try c.decodeIfPresent([Aes67TxInfo].self, forKey: .txFlows) ?? []
+        ptpLocked = try c.decodeIfPresent(Bool.self, forKey: .ptpLocked) ?? false
+        ptpGrandmaster = try c.decodeIfPresent(String.self, forKey: .ptpGrandmaster) ?? ""
+        ptpDomain = try c.decodeIfPresent(Int.self, forKey: .ptpDomain) ?? 0
     }
 }
 

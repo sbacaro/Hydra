@@ -1,0 +1,4 @@
+framework module HydraModuleABI {
+    header "hydra_module.h"
+    export *
+}

@@ -89,6 +89,28 @@ final class SceneStore {
         }
     }
 
+    /// 512-wire migration: shifts scene destinations that sat in the old
+    /// shared out slices into the dedicated receiver pool.
+    func rebaseDestinations(in ranges: [Range<Int>], by offset: Int) {
+        queue.sync {
+            var changed = false
+            for sceneIndex in scenes.indices {
+                for connIndex in scenes[sceneIndex].connections.indices {
+                    let conn = scenes[sceneIndex].connections[connIndex]
+                    if conn.destination.nodeID == Hydra.backplaneNodeID,
+                       ranges.contains(where: { $0.contains(conn.destination.channelIndex) }) {
+                        let moved = PatchPoint(nodeID: conn.destination.nodeID,
+                                               channelIndex: conn.destination.channelIndex + offset)
+                        scenes[sceneIndex].connections[connIndex] =
+                            Connection(source: conn.source, destination: moved, gain: conn.gain)
+                        changed = true
+                    }
+                }
+            }
+            if changed { persistLocked() }
+        }
+    }
+
     /// Returns true if a scene was deleted.
     func delete(id: UUID) -> Bool {
         queue.sync {
@@ -146,12 +168,33 @@ final class InterfaceStore {
     private let queue = DispatchQueue(label: "hydra.interfaces")
     private var list: [VirtualInterfaceInfo] = []
     private static let url = hydraSupportURL("interfaces.json")
+    /// Out-slice wire ranges that were rebased by the 512-wire migration
+    /// (old absolute range) — main.swift remaps persisted patches with it.
+    private(set) var migratedOutRanges: [Range<Int>] = []
 
     init() {
         if let data = try? Data(contentsOf: Self.url),
            let loaded = try? JSONDecoder().decode([VirtualInterfaceInfo].self, from: data) {
             list = loaded
         }
+        dropInterfacesOutsidePool()
+    }
+
+    /// The device is a single shared 256-channel pool now (the 512-wire split was
+    /// reverted). Drop any persisted interface whose in/out slice no longer fits
+    /// [0, backplaneChannels) — e.g. old receiver slices that lived in [256, 512).
+    /// What fits is kept as-is; dropped interfaces are recreated in the new layout.
+    private func dropInterfacesOutsidePool() {
+        let n = Hydra.backplaneChannels
+        func fits(_ base: Int, _ count: Int) -> Bool { count == 0 || (base >= 0 && base + count <= n) }
+        let kept = list.filter { fits($0.inBase, $0.inChannels) && fits($0.outBase, $0.outChannels) }
+        guard kept.count != list.count else { return }
+        let dropped = list.count - kept.count
+        list = kept
+        if let data = try? JSONEncoder().encode(list) {
+            try? data.write(to: Self.url, options: .atomic)
+        }
+        log("Interfaces: dropped \(dropped) that didn't fit the 256-channel shared pool (device resized 512→256). Recreate them.")
     }
 
     func all() -> [VirtualInterfaceInfo] {
@@ -164,38 +207,46 @@ final class InterfaceStore {
     /// driver loopback). Returns nil + warning when the pool can't fit it.
     @discardableResult
     func create(name: String, inChannels: Int, outChannels: Int,
-                ndiTX: Bool = false, aes67TX: Bool = false) -> VirtualInterfaceInfo? {
+                ndiTX: Bool = false, aes67TX: Bool = false,
+                stereo: Bool = false) -> VirtualInterfaceInfo? {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty,
               inChannels >= 0, outChannels >= 0,
               inChannels + outChannels >= 1,
-              inChannels + outChannels <= Hydra.backplaneChannels else { return nil }
+              inChannels <= Hydra.poolChannels,
+              outChannels <= Hydra.poolChannels else { return nil }
         return queue.sync {
-            var occupied: [(base: Int, count: Int)] = list.flatMap {
-                [($0.inBase, $0.inChannels), ($0.outBase, $0.outChannels)]
-            }.filter { $0.1 > 0 }
-
-            func allocate(_ count: Int) -> Int? {
-                guard count > 0 else { return 0 } // empty side: base unused
+            // Single shared pool: in AND out slices come from ONE free-space map
+            // over [0, backplaneChannels), mutually exclusive — so no interface's
+            // input can ever alias another's output through the driver loopback.
+            // (Transmitters + receivers therefore total at most backplaneChannels.)
+            func allocate(_ count: Int, occupied: [(base: Int, count: Int)]) -> Int? {
+                guard count > 0 else { return 0 }          // empty side: base unused
                 var base = 0
                 for slot in occupied.sorted(by: { $0.base < $1.base }) {
                     if slot.base - base >= count { break }
                     base = max(base, slot.base + slot.count)
                 }
-                guard base + count <= Hydra.backplaneChannels else { return nil }
-                occupied.append((base, count))
-                return base
+                return base + count <= Hydra.backplaneChannels ? base : nil
             }
-
-            guard let inBase = allocate(inChannels),
-                  let outBase = allocate(outChannels) else {
-                EventCenter.shared.emit(.warning, "No room for \"\(trimmed)\": the soundcard pool (\(Hydra.backplaneChannels) channels) is full.")
+            var occupied: [(base: Int, count: Int)] = []
+            for iface in list {
+                if iface.inChannels  > 0 { occupied.append((base: iface.inBase,  count: iface.inChannels)) }
+                if iface.outChannels > 0 { occupied.append((base: iface.outBase, count: iface.outChannels)) }
+            }
+            guard let inBase = allocate(inChannels, occupied: occupied) else {
+                EventCenter.shared.emit(.warning, "No room for \"\(trimmed)\": the 256-channel pool is full.")
+                return nil
+            }
+            if inChannels > 0 { occupied.append((base: inBase, count: inChannels)) }
+            guard let outBase = allocate(outChannels, occupied: occupied) else {
+                EventCenter.shared.emit(.warning, "No room for \"\(trimmed)\": the 256-channel pool is full.")
                 return nil
             }
             let info = VirtualInterfaceInfo(name: trimmed,
                                             inChannels: inChannels, outChannels: outChannels,
                                             inBase: inBase, outBase: outBase,
-                                            ndiTX: ndiTX, aes67TX: aes67TX)
+                                            ndiTX: ndiTX, aes67TX: aes67TX, stereo: stereo)
             list.append(info)
             persistLocked()
             log("Interface created: \"\(trimmed)\" — \(inChannels) in @ \(inBase + 1), \(outChannels) out @ \(outBase + 1)")

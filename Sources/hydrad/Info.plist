@@ -10,6 +10,13 @@
 	<string>0.5.0</string>
 	<key>CFBundleVersion</key>
 	<string>0.5.0</string>
+	<!-- Background agent: hydrad runs without a Dock icon or menu bar presence.
+	     It can still open VST plugin editor windows (accessory activation policy).
+	     LSUIElement must live in this Info.plist because the daemon target uses
+	     GENERATE_INFOPLIST_FILE = NO, so the INFOPLIST_KEY_LSUIElement build
+	     setting is ignored. -->
+	<key>LSUIElement</key>
+	<true/>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Hydra captures the audio of apps you choose so it can be routed in the patch grid.</string>
 </dict>

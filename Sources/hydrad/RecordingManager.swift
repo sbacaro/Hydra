@@ -22,16 +22,18 @@ final class RecordingManager {
         private var thread: Thread?
         private var running = true
 
-        init?(interface: VirtualInterfaceInfo, rate: Double, directory: URL) {
+        init?(interface: VirtualInterfaceInfo, rate: Double, directory: URL,
+              format: String) {
             let stamp = Self.timestamp()
             let fileName = "\(interface.name) \(stamp).wav"
             let url = directory.appendingPathComponent(fileName)
+            let pcm24 = format == "pcm24"
             let settings: [String: Any] = [
                 AVFormatIDKey: kAudioFormatLinearPCM,
                 AVSampleRateKey: rate,
                 AVNumberOfChannelsKey: interface.outChannels,
-                AVLinearPCMBitDepthKey: 32,
-                AVLinearPCMIsFloatKey: true,
+                AVLinearPCMBitDepthKey: pcm24 ? 24 : 32,
+                AVLinearPCMIsFloatKey: !pcm24,
                 AVLinearPCMIsBigEndianKey: false,
                 AVLinearPCMIsNonInterleaved: false
             ]
@@ -122,7 +124,7 @@ final class RecordingManager {
         self.store = store
     }
 
-    func start(interface: VirtualInterfaceInfo) {
+    func start(interface: VirtualInterfaceInfo, config: ConfigPayload) {
         queue.sync {
             guard active[interface.id] == nil else { return }
             guard interface.outChannels > 0 else {
@@ -131,8 +133,16 @@ final class RecordingManager {
             }
             let rate = BackplaneProbe.backplaneDeviceID()
                 .map(BackplaneProbe.nominalSampleRate) ?? Hydra.defaultSampleRate
+            let directory: URL
+            if config.recordingFolderPath.isEmpty {
+                directory = Self.directory
+            } else {
+                directory = URL(fileURLWithPath: config.recordingFolderPath, isDirectory: true)
+                try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            }
             guard let recording = Recording(interface: interface, rate: rate,
-                                            directory: Self.directory) else {
+                                            directory: directory,
+                                            format: config.recordingFormat) else {
                 EventCenter.shared.emit(.error, "Could not start recording \(interface.name).")
                 return
             }

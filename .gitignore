@@ -8,3 +8,9 @@ dist/
 *.driver
 .swiftpm/
 ThirdParty/
+
+# xcodebuild -derivedDataPath build
+build/
+.xcodebuild/
+# project backups
+*.pbxproj.bak

@@ -1,0 +1,4 @@
+framework module HydraNDIShim {
+    header "hydra_ndi.h"
+    export *
+}

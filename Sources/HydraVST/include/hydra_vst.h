@@ -16,6 +16,10 @@ extern "C" {
 typedef struct {
     char name[256];
     char vendor[256];
+    /// VST3 subcategory string, e.g. "Fx", "Fx|Reverb", "Instrument|Synth".
+    /// Empty when the plugin declares none. Used by the app's plugin manager
+    /// to group/filter by type (effect vs instrument vs EQ ...).
+    char category[256];
 } hydra_vst_class_info;
 
 /// Opens a .vst3 bundle and returns an opaque module handle (NULL on failure).

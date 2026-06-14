@@ -1,0 +1,66 @@
+name: CI
+
+# Build + unit-test gate. Runs on every push and PR. The project is GENERATED
+# from Scripts/generate_xcodeproj.rb (xcodeproj gem), so CI regenerates it fresh
+# rather than trusting a committed .xcodeproj.
+#
+# NOTE: the deployment target is macOS 26.0 (Scripts/generate_xcodeproj.rb:DEPLOY),
+# so the runner must ship the macOS 26 SDK / Xcode 26. `macos-latest` should resolve
+# to it; pin `runs-on: macos-26` if/when a labelled runner exists.
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Unit tests + app build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+
+      - name: Install xcodeproj gem
+        run: gem install xcodeproj --no-document
+
+      - name: Generate Xcode project
+        run: ruby Scripts/generate_xcodeproj.rb
+
+      # The HydraCore scheme bundles the HydraCoreTests target — this is the gate.
+      - name: HydraCore unit tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Hydra.xcodeproj \
+            -scheme HydraCore \
+            -destination 'platform=macOS' \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO
+
+      # Smoke-build the app (engine + UI) without signing, so a broken build is
+      # caught even when no test covers the changed code.
+      - name: Build HydraApp (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Hydra.xcodeproj \
+            -scheme HydraApp \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults.xcresult
+          if-no-files-found: ignore

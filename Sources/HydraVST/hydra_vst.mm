@@ -193,6 +193,10 @@ bool hydra_vst_class_info_at(void *module, int32_t index, hydra_vst_class_info *
     out->name[sizeof(out->name) - 1] = 0;
     std::strncpy(out->vendor, info.vendor().c_str(), sizeof(out->vendor) - 1);
     out->vendor[sizeof(out->vendor) - 1] = 0;
+    // VST3 subcategory ("Fx|Reverb", "Instrument|Synth", ...) for the app's
+    // plugin manager to filter by type. ClassInfo joins the categories with '|'.
+    std::strncpy(out->category, info.subCategoriesString().c_str(), sizeof(out->category) - 1);
+    out->category[sizeof(out->category) - 1] = 0;
     return true;
 }
 
@@ -359,45 +363,68 @@ bool hydra_vst_open_editor(void *opaque, const char *title)
     if (!instance || !instance->controller) {
         return false;
     }
-    if (instance->window) {
-        [instance->window makeKeyAndOrderFront:nil];
+
+    // NSWindow + the plugin's IPlugView MUST be created/attached on the main
+    // thread (AppKit asserts `NSWindow should only be instantiated on the main
+    // thread!` otherwise). This is called from the daemon's message loop, which
+    // is NOT the main thread — so force the whole UI build onto the main queue,
+    // exactly like hydra_vst_teardown_editor does. The [isMainThread] guard
+    // avoids a dispatch_sync-to-self deadlock when a caller is already on main.
+    __block bool result = false;
+    NSString *titleStr = title ? [NSString stringWithUTF8String:title] : nil;
+    void (^work)(void) = ^{
+        // The daemon normally runs as an ACCESSORY app (no Dock icon). Accessory
+        // apps show windows but don't reliably deliver mouse/keyboard to them and
+        // don't keep a plugin's redraw timer ticking — so the editor renders once
+        // and then sits frozen like a static image. Promote to a regular
+        // foreground app so the plugin GUI becomes fully interactive.
+        if ([NSApp activationPolicy] != NSApplicationActivationPolicyRegular) {
+            [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        }
+        if (instance->window) {
+            [instance->window makeKeyAndOrderFront:nil];
+            [NSApp activateIgnoringOtherApps:YES];
+            result = true;
+            return;
+        }
+        IPlugView *view = instance->controller->createView(ViewType::kEditor);
+        if (!view) { result = false; return; }
+        ViewRect rect{};
+        if (view->getSize(&rect) != kResultOk || rect.getWidth() <= 0) {
+            rect.right = rect.left + 800;
+            rect.bottom = rect.top + 500;
+        }
+        NSWindow *window = [[NSWindow alloc]
+            initWithContentRect:NSMakeRect(120, 120, rect.getWidth(), rect.getHeight())
+                      styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                                 NSWindowStyleMaskMiniaturizable)
+                        backing:NSBackingStoreBuffered
+                          defer:NO];
+        window.title = titleStr ? titleStr
+                                : [NSString stringWithUTF8String:instance->name.c_str()];
+        window.releasedWhenClosed = NO;
+
+        instance->frame.window = window;
+        view->setFrame(&instance->frame);
+
+        if (view->attached((__bridge void *)window.contentView, kPlatformTypeNSView) != kResultOk) {
+            view->release();
+            result = false;
+            return;
+        }
+
+        instance->view = view;
+        instance->window = window;
+        [window makeKeyAndOrderFront:nil];
         [NSApp activateIgnoringOtherApps:YES];
-        return true;
+        result = true;
+    };
+    if ([NSThread isMainThread]) {
+        work();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), work);
     }
-
-    IPlugView *view = instance->controller->createView(ViewType::kEditor);
-    if (!view) {
-        return false;
-    }
-    ViewRect rect{};
-    if (view->getSize(&rect) != kResultOk || rect.getWidth() <= 0) {
-        rect.right = rect.left + 800;
-        rect.bottom = rect.top + 500;
-    }
-
-    NSWindow *window = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(120, 120, rect.getWidth(), rect.getHeight())
-                  styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                             NSWindowStyleMaskMiniaturizable)
-                    backing:NSBackingStoreBuffered
-                      defer:NO];
-    window.title = title ? [NSString stringWithUTF8String:title]
-                         : [NSString stringWithUTF8String:instance->name.c_str()];
-    window.releasedWhenClosed = NO;
-
-    instance->frame.window = window;
-    view->setFrame(&instance->frame);
-
-    if (view->attached((__bridge void *)window.contentView, kPlatformTypeNSView) != kResultOk) {
-        view->release();
-        return false;
-    }
-
-    instance->view = view;
-    instance->window = window;
-    [window makeKeyAndOrderFront:nil];
-    [NSApp activateIgnoringOtherApps:YES];
-    return true;
+    return result;
 }
 
 static void hydra_vst_teardown_editor(Instance *instance)

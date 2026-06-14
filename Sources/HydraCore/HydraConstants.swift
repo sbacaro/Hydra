@@ -6,7 +6,7 @@ import Foundation
 
 public enum Hydra {
     // MARK: Version
-    public static let version = "0.15.1"
+    public static let version = "0.19.1"
     public static let stage = "beta"
     public static var versionString: String { "\(version) \(stage)" }
 
@@ -15,8 +15,14 @@ public enum Hydra {
     public static let backplaneDeviceName = "Hydra Virtual Soundcard"
     /// Bundle ID of the HAL plugin (customized BlackHole).
     public static let backplaneBundleID = "audio.hydra.virtualsoundcard"
-    /// Channel count of the backplane (256 in × 256 out).
+    /// Loopback wires of the backplane device (output N → input N): 256 in / 256
+    /// out. ONE shared pool — transmitters (app→Hydra) and receivers (Hydra→app)
+    /// both allocate from [0, backplaneChannels), exclusively (a wire can't carry
+    /// both directions through the loopback). So transmitters + receivers ≤ 256.
     public static let backplaneChannels = 256
+    /// Max channels one direction (in or out) may use; the shared pool also caps
+    /// the in+out total at backplaneChannels.
+    public static let poolChannels = 256
     /// Initial target sample rate.
     public static let defaultSampleRate: Double = 48_000
 
@@ -40,8 +46,17 @@ public enum Hydra {
     public static let backplaneNodeID = "backplane"
     /// Hard cap of simultaneous connections (sizes the RT meter buffer).
     public static let maxConnections = 1024
-    /// Meter broadcast interval (seconds).
-    public static let meterInterval: Double = 0.1
+    /// Signal-presence poll interval (seconds). The daemon no longer streams
+    /// continuous levels — it polls peaks, derives a binary on/off, and only
+    /// broadcasts when the on/off set CHANGES. So this is just LED responsiveness,
+    /// not a per-tick cost: ~150 ms to light/clear is plenty.
+    public static let meterInterval: Double = 0.15
+    /// Peak above which a channel/connection counts as "has signal" (linear,
+    /// ~ -50 dBFS). Matches the app's signalThreshold.
+    public static let signalFloorLinear: Float = 0.0032
+    /// Stay "on" this long after the last over-threshold sample, so a steady
+    /// source doesn't flicker and gaps in speech/music don't drop the LED.
+    public static let signalReleaseSeconds: Double = 0.4
 
     // MARK: Physical devices (Phase 2b)
     /// Ring buffer length per device/direction, in frames (power of two).
@@ -109,6 +124,24 @@ public enum Hydra {
     public static func ndiNodeID(sourceID: String) -> String { "ndi:\(sourceID)" }
     public static func ndiSourceID(fromNodeID nodeID: String) -> String? {
         nodeID.hasPrefix("ndi:") ? String(nodeID.dropFirst(4)) : nil
+    }
+
+    // MARK: Modules (generic plugin host)
+    /// Max channels a module source may expose (matches the RT scratch size).
+    public static let moduleMaxChannels = 64
+    public static func moduleNodeID(sourceID: String) -> String { "mod:\(sourceID)" }
+    public static func moduleSourceID(fromNodeID nodeID: String) -> String? {
+        nodeID.hasPrefix("mod:") ? String(nodeID.dropFirst(4)) : nil
+    }
+    /// Node id for a module SINK (transmit destination).
+    public static func moduleSinkNodeID(sinkID: String) -> String { "modtx:\(sinkID)" }
+    public static func moduleSinkID(fromNodeID nodeID: String) -> String? {
+        nodeID.hasPrefix("modtx:") ? String(nodeID.dropFirst(6)) : nil
+    }
+    /// Where the daemon looks for module .dylibs (never shipped with Hydra).
+    public static func modulesDirectory() -> String {
+        let base = NSHomeDirectory()
+        return base + "/Library/Application Support/Hydra/modules"
     }
 
     // MARK: VST3 (Phase 6)

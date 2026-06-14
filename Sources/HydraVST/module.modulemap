@@ -1,0 +1,4 @@
+framework module HydraVST {
+    header "hydra_vst.h"
+    export *
+}

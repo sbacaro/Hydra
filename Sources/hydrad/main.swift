@@ -7,6 +7,19 @@ import Foundation
 import AppKit
 import HydraCore
 
+// VST scan worker mode: `hydrad --scan-bundle <bundle> --out <file>` loads ONE
+// plugin bundle in this throwaway process, writes its classes as JSON to <file>,
+// and exits — BEFORE any daemon setup. This isolates plugin scan hangs/crashes
+// (and the objc class collisions some vendor plugins cause when loaded together)
+// from the real daemon: the parent kills a hung worker on timeout and treats a
+// crashed worker's non-zero exit as "offline".
+if let bi = CommandLine.arguments.firstIndex(of: "--scan-bundle"), bi + 1 < CommandLine.arguments.count,
+   let oi = CommandLine.arguments.firstIndex(of: "--out"), oi + 1 < CommandLine.arguments.count {
+    StripManager.scanBundleWorkerJSON(bundlePath: CommandLine.arguments[bi + 1],
+                                      outPath: CommandLine.arguments[oi + 1])
+    exit(0)
+}
+
 log("Hydra daemon \(Hydra.versionString) starting")
 
 let store = MatrixStore()
@@ -19,11 +32,33 @@ let tapManager = ProcessTapManager(store: store)
 let aes67Manager = Aes67Manager(store: store)
 let stripManager = StripManager(store: store)
 let ndiManager = NdiManager(store: store)
+let moduleManager = ModuleManager(store: store)
 let recordingManager = RecordingManager(store: store)
 let aes67TxManager = Aes67TxManager(store: store)
 let oscServer = OscServer()
 let configStore = ConfigStore()
 let interfaceStore = InterfaceStore()
+// 512-wire split migration: when out slices moved into the receiver pool,
+// rebase every persisted patch/scene destination that pointed at them.
+if !interfaceStore.migratedOutRanges.isEmpty {
+    let ranges = interfaceStore.migratedOutRanges
+    func rebase(_ connections: [Connection]) -> [Connection] {
+        connections.map { conn in
+            guard conn.destination.nodeID == Hydra.backplaneNodeID,
+                  ranges.contains(where: { $0.contains(conn.destination.channelIndex) })
+            else { return conn }
+            let moved = PatchPoint(nodeID: conn.destination.nodeID,
+                                   channelIndex: conn.destination.channelIndex + Hydra.poolChannels)
+            return Connection(source: conn.source, destination: moved, gain: conn.gain)
+        }
+    }
+    let rebased = rebase(store.allConnections())
+    if rebased != store.allConnections() {
+        _ = store.replaceAll(rebased)
+        log("Patches rebased to the 512-wire layout (\(rebased.count) connections)")
+    }
+    sceneStore.rebaseDestinations(in: ranges, by: Hydra.poolChannels)
+}
 store.feedbackProtectionEnabled = configStore.current().feedbackProtection
 tapManager.setMakeup(dB: configStore.current().appTapMakeupDB)
 oscServer.apply(enabled: configStore.current().oscEnabled,
@@ -40,11 +75,19 @@ if initial.backplaneInstalled {
 func aes67FullPayload() -> Aes67Payload {
     var payload = aes67Manager.payload()
     payload.txFlows = aes67TxManager.flows()
+    let ptp = PtpClock.shared.status()
+    payload.ptpLocked = ptp.locked
+    payload.ptpGrandmaster = ptp.grandmaster
+    payload.ptpDomain = Int(ptp.domain)
     return payload
 }
 
 func currentStatus() -> StatusPayload {
-    BackplaneProbe.currentStatus(engineRunning: engine.isRunning)
+    var status = BackplaneProbe.currentStatus(engineRunning: engine.isRunning)
+    // Rounded so identical-idle payloads stay identical (broadcast skip).
+    status.cpuLoad = (engine.cpuLoad * 100).rounded() / 100
+    status.xruns = engine.xruns
+    return status
 }
 
 var server: WebSocketServer!
@@ -66,138 +109,11 @@ do {
             server.send(.config(configStore.current()), to: connection)
             server.send(.interfaces(InterfacesPayload(interfaces: interfaceStore.all())), to: connection)
             server.send(.ndi(ndiManager.payload()), to: connection)
+            server.send(.modules(moduleManager.payload()), to: connection)
             server.send(.recordings(recordingManager.payload()), to: connection)
         },
         onMessage: { message, connection in
-            switch message {
-            case .getStatus:
-                server.send(.status(currentStatus()), to: connection)
-            case .getMatrix:
-                server.send(.matrix(MatrixPayload(connections: store.allConnections())), to: connection)
-            case .setConnection(let conn):
-                if store.upsert(conn) {
-                    server.broadcast(.matrix(MatrixPayload(connections: store.allConnections())))
-                } else {
-                    // Rejected (e.g. feedback guard): resync the sender so its
-                    // optimistic local update rolls back.
-                    server.send(.matrix(MatrixPayload(connections: store.allConnections())), to: connection)
-                }
-            case .removeConnection(let conn):
-                if store.remove(conn) {
-                    server.broadcast(.matrix(MatrixPayload(connections: store.allConnections())))
-                }
-            case .getLabels:
-                server.send(.labels(labels.all()), to: connection)
-            case .setLabel(let change):
-                if labels.set(change) {
-                    server.broadcast(.labels(labels.all()))
-                }
-            case .getScenes:
-                server.send(.scenes(ScenesPayload(scenes: sceneStore.all())), to: connection)
-            case .saveScene(let payload):
-                sceneStore.save(name: payload.name, connections: store.allConnections())
-                server.broadcast(.scenes(ScenesPayload(scenes: sceneStore.all())))
-                log("Scene saved: \"\(payload.name)\"")
-            case .applyScene(let ref):
-                if let scene = sceneStore.scene(id: ref.id), store.replaceAll(scene.connections) {
-                    server.broadcast(.matrix(MatrixPayload(connections: store.allConnections())))
-                    log("Scene applied: \"\(scene.name)\" (\(scene.connections.count) connections)")
-                }
-            case .deleteScene(let ref):
-                if sceneStore.delete(id: ref.id) {
-                    server.broadcast(.scenes(ScenesPayload(scenes: sceneStore.all())))
-                }
-            case .getDevices:
-                server.send(.devices(DevicesPayload(devices: deviceManager.infos())), to: connection)
-            case .setDeviceUse(let payload):
-                deviceManager.setUse(uid: payload.uid, used: payload.used)
-                // onChange broadcasts the refreshed device list.
-            case .getApps:
-                server.send(.apps(AppsPayload(apps: tapManager.infos())), to: connection)
-            case .setAppCapture(let payload):
-                tapManager.setCapture(pid: payload.pid, captured: payload.captured)
-                // onChange broadcasts the refreshed app list.
-            case .getAes67:
-                server.send(.aes67(aes67FullPayload()), to: connection)
-            case .subscribeStream(let payload):
-                aes67Manager.setSubscribed(id: payload.id, subscribed: payload.subscribed)
-                // onChange broadcasts the refreshed network state.
-            case .getVST:
-                server.send(.vst(stripManager.vstPayload()), to: connection)
-            case .getStrips:
-                server.send(.strips(stripManager.stripsPayload()), to: connection)
-            case .setStrip(let strip):
-                stripManager.setStrip(strip)
-                // onChange broadcasts the refreshed strips.
-            case .openPluginEditor(let payload):
-                stripManager.openEditor(stripID: payload.stripID, index: payload.index)
-            case .setConfig(let payload):
-                configStore.update(payload)
-                store.feedbackProtectionEnabled = payload.feedbackProtection
-                tapManager.setMakeup(dB: payload.appTapMakeupDB)
-                oscServer.apply(enabled: payload.oscEnabled, port: payload.oscPort)
-                server.broadcast(.config(payload))
-                log("Config updated: feedbackProtection=\(payload.feedbackProtection)")
-            case .getInterfaces:
-                server.send(.interfaces(InterfacesPayload(interfaces: interfaceStore.all())), to: connection)
-            case .createInterface(let payload):
-                if interfaceStore.create(name: payload.name,
-                                         inChannels: payload.inChannels,
-                                         outChannels: payload.outChannels,
-                                         ndiTX: payload.ndiTX,
-                                         aes67TX: payload.aes67TX) != nil {
-                    server.broadcast(.interfaces(InterfacesPayload(interfaces: interfaceStore.all())))
-                    ndiManager.syncTx(interfaces: interfaceStore.all())
-                    aes67TxManager.syncTx(interfaces: interfaceStore.all())
-                }
-            case .deleteInterface(let ref):
-                if let removed = interfaceStore.delete(id: ref.id) {
-                    // Drop patches touching the freed slices (per direction).
-                    let inRange = removed.inBase ..< (removed.inBase + removed.inChannels)
-                    let outRange = removed.outBase ..< (removed.outBase + removed.outChannels)
-                    let kept = store.allConnections().filter { (conn: Connection) -> Bool in
-                        let srcHit = conn.source.nodeID == Hydra.backplaneNodeID
-                            && inRange.contains(conn.source.channelIndex)
-                        let dstHit = conn.destination.nodeID == Hydra.backplaneNodeID
-                            && outRange.contains(conn.destination.channelIndex)
-                        return !srcHit && !dstHit
-                    }
-                    if kept.count != store.allConnections().count, store.replaceAll(kept) {
-                        server.broadcast(.matrix(MatrixPayload(connections: store.allConnections())))
-                    }
-                    server.broadcast(.interfaces(InterfacesPayload(interfaces: interfaceStore.all())))
-                    ndiManager.syncTx(interfaces: interfaceStore.all())
-                    aes67TxManager.syncTx(interfaces: interfaceStore.all())
-                    recordingManager.interfacesChanged(interfaceStore.all())
-                }
-            case .setInterfaceNDI(let payload):
-                if interfaceStore.setNDI(id: payload.id, enabled: payload.enabled) {
-                    server.broadcast(.interfaces(InterfacesPayload(interfaces: interfaceStore.all())))
-                    ndiManager.syncTx(interfaces: interfaceStore.all())
-                }
-            case .setInterfaceAES67(let payload):
-                if interfaceStore.setAES67(id: payload.id, enabled: payload.enabled) {
-                    server.broadcast(.interfaces(InterfacesPayload(interfaces: interfaceStore.all())))
-                    aes67TxManager.syncTx(interfaces: interfaceStore.all())
-                }
-            case .getNdi:
-                server.send(.ndi(ndiManager.payload()), to: connection)
-            case .getRecordings:
-                server.send(.recordings(recordingManager.payload()), to: connection)
-            case .startRecording(let ref):
-                if let interface = interfaceStore.all().first(where: { $0.id == ref.id }) {
-                    recordingManager.start(interface: interface)
-                }
-            case .stopRecording(let ref):
-                recordingManager.stop(interfaceID: ref.id)
-                // onChange broadcasts the refreshed recordings state.
-            case .subscribeNdi(let payload):
-                ndiManager.setSubscribed(id: payload.id, subscribed: payload.subscribed)
-                // onChange broadcasts the refreshed NDI state.
-            case .status, .matrix, .levels, .labels, .scenes, .devices, .apps, .aes67,
-                 .vst, .strips, .events, .event, .config, .interfaces, .ndi, .recordings:
-                break // daemon → app only; ignore if echoed
-            }
+            handleWSMessage(message, from: connection)
         })
 } catch {
     log("Could not create server on port \(Hydra.daemonPort): \(error)")
@@ -241,6 +157,13 @@ ndiManager.onChange = { payload in
 ndiManager.start()
 ndiManager.syncTx(interfaces: interfaceStore.all())
 
+// Modules: generic plugin host (loads external .dylibs if present; none ship
+// with Hydra). Their network sources appear in the grid like NDI sources.
+moduleManager.onChange = { payload in
+    server.broadcast(.modules(payload))
+}
+moduleManager.start()
+
 // Recordings: state pushes for the app's record buttons.
 recordingManager.onChange = { payload in
     server.broadcast(.recordings(payload))
@@ -273,7 +196,7 @@ oscServer.onMessage = { message in
         if let name = message.firstString,
            let interface = interfaceStore.all().first(where: {
                $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) {
-            recordingManager.start(interface: interface)
+            recordingManager.start(interface: interface, config: configStore.current())
         }
     case "/hydra/record/stop":
         if let name = message.firstString,
@@ -293,6 +216,13 @@ stripManager.onChange = { vstPayload, stripsPayload in
 }
 stripManager.start()
 
+// PTP slave (Phase 5): disciplines AES67 TX timestamps to the network clock.
+PtpClock.shared.onChange = { status in
+    aes67TxManager.ptpChanged(locked: status.locked)
+    server.broadcast(.aes67(aes67FullPayload()))
+}
+PtpClock.shared.start()
+
 // Re-probe every 3 s: track backplane presence, manage engine lifecycle,
 // broadcast status changes (e.g. backplane installed while app is open).
 var lastStatus = initial
@@ -307,27 +237,65 @@ probeTimer.setEventHandler {
     }
     let status = currentStatus()
     if status != lastStatus {
+        // Log only real state transitions (metrics tick along silently).
+        if status.backplaneInstalled != lastStatus.backplaneInstalled
+            || status.engineRunning != lastStatus.engineRunning {
+            log("State changed — broadcasting (backplane: \(status.backplaneInstalled ? "present" : "absent"), engine: \(status.engineRunning ? "running" : "stopped"))")
+        }
         lastStatus = status
-        log("State changed — broadcasting (backplane: \(status.backplaneInstalled ? "present" : "absent"), engine: \(status.engineRunning ? "running" : "stopped"))")
         server.broadcast(.status(status))
     }
 }
 probeTimer.resume()
 
-// Meters: broadcast post-gain peaks while clients are connected.
+// Signal presence: poll post-gain peaks while clients are connected and turn
+// them into a BINARY on/off (1 = has signal, 0 = silent), with a short release
+// hold so a steady source doesn't flicker. The payload then changes only when
+// something starts or stops — the dedup below collapses what used to be a 10 Hz
+// stream into a couple of messages per audio event, killing the app-side
+// re-layout storm. The channel-strip VU is rendered as a local estimated
+// animation in the app; it only needs the on/off state, not real levels.
 let meterTimer = DispatchSource.makeTimerSource(queue: .global())
 meterTimer.schedule(deadline: .now() + Hydra.meterInterval, repeating: Hydra.meterInterval)
 var lastLevels: LevelsPayload?
+let signalFloor = Hydra.signalFloorLinear
+let release     = Hydra.signalReleaseSeconds
+var lastOn:    [String: Date] = [:]   // connection ID → last over-threshold time
+var lastSrcOn: [Int: Date]    = [:]   // source channel index → last over-threshold
+var lastDstOn: [Int: Date]    = [:]   // destination channel index → last over-threshold
 meterTimer.setEventHandler {
     let active = engine.isRunning && server.hasClients
     store.channelMeteringEnabled = active
     guard active else { return }
+    let now = Date()
+    let rawPeaks = store.levels()
     let (inputs, outputs) = store.channelPeaks()
-    let payload = LevelsPayload(peaks: store.levels(),
-                                sourcePeaks: inputs,
-                                destinationPeaks: outputs)
-    // Idle system → identical payloads → skip: no JSON encode, no wake-ups
-    // in the app. Real audio changes every tick, so nothing is lost.
+
+    // Connections → on/off (with release hold).
+    var onPeaks: [String: Float] = [:]
+    onPeaks.reserveCapacity(rawPeaks.count)
+    for (id, v) in rawPeaks {
+        if v > signalFloor { lastOn[id] = now }
+        let on = lastOn[id].map { now.timeIntervalSince($0) < release } ?? false
+        onPeaks[id] = on ? 1 : 0
+    }
+    lastOn = lastOn.filter { rawPeaks[$0.key] != nil }   // forget removed connections
+
+    // Per-channel source/destination → on/off (drives the grid pins).
+    var srcOn = [Float](repeating: 0, count: inputs.count)
+    for i in inputs.indices {
+        if inputs[i] > signalFloor { lastSrcOn[i] = now }
+        srcOn[i] = (lastSrcOn[i].map { now.timeIntervalSince($0) < release } ?? false) ? 1 : 0
+    }
+    var dstOn = [Float](repeating: 0, count: outputs.count)
+    for i in outputs.indices {
+        if outputs[i] > signalFloor { lastDstOn[i] = now }
+        dstOn[i] = (lastDstOn[i].map { now.timeIntervalSince($0) < release } ?? false) ? 1 : 0
+    }
+
+    let payload = LevelsPayload(peaks: onPeaks, sourcePeaks: srcOn, destinationPeaks: dstOn)
+    // On/off rarely changes → identical payloads → skip: no JSON encode, no
+    // wake-ups in the app, no re-render/re-layout.
     guard payload != lastLevels else { return }
     lastLevels = payload
     server.broadcast(.levels(payload))

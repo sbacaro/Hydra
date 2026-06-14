@@ -70,6 +70,7 @@ final class MatrixStore {
     private var appTaps: [EngineTap] = []
     private var netTaps: [EngineTap] = []
     private var ndiTaps: [EngineTap] = []
+    private var moduleTaps: [EngineTap] = []   // generic module sources
     private var poolTxTaps: [PoolTxTap] = []      // NDI senders
     private var recordTaps: [PoolTxTap] = []      // disk recorders
     private var aesTxTaps: [PoolTxTap] = []       // AES67 transmitters
@@ -77,7 +78,7 @@ final class MatrixStore {
     private var stripRoutes: [StripRoute] = []
     /// Chains MUST come last: process() uses their buffer-index range to
     /// split mixing into pre-chain and post-chain passes.
-    private var taps: [EngineTap] { deviceTaps + appTaps + netTaps + ndiTaps + chainTaps }
+    private var taps: [EngineTap] { deviceTaps + appTaps + netTaps + ndiTaps + moduleTaps + chainTaps }
     private var slotByID: [String: Int32] = [:]
     private var freeSlots: [Int32] = (0..<Int32(Hydra.maxConnections)).reversed()
     private var retained: [Snapshot] = []
@@ -91,6 +92,9 @@ final class MatrixStore {
     private let frameAbs: UnsafeMutablePointer<Float>
     /// Single-byte flag: control sets it, RT reads it.
     var channelMeteringEnabled = false
+    /// Audio-thread-only: frames since the last per-channel metering pass, so we
+    /// scan for signal LEDs at ~20–45 Hz instead of every buffer (~187 Hz).
+    private var meteringAccum = 0
     /// User setting (Settings → Feedback protection). Control-plane only.
     var feedbackProtectionEnabled = true
     private let lock: UnsafeMutablePointer<os_unfair_lock>
@@ -183,6 +187,14 @@ final class MatrixStore {
         }
     }
 
+    /// New module-provided RX set (from ModuleManager). Atomic re-bind.
+    func setModuleTaps(_ newTaps: [EngineTap]) {
+        control.sync {
+            moduleTaps = newTaps
+            rebuildLocked()
+        }
+    }
+
     /// New pool TX set (NDI senders bound to virtual interfaces).
     func setPoolTxTaps(_ newTaps: [PoolTxTap]) {
         control.sync {
@@ -234,6 +246,15 @@ final class MatrixStore {
         }
         if Hydra.vstChainID(fromNodeID: point.nodeID) != nil {
             return (0..<Hydra.vstChainChannels).contains(point.channelIndex)
+        }
+        // Module SOURCES (mod:, e.g. a Dante RX channel) and the module SINK
+        // (modtx:, the Dante TX node). Without these, any patch involving a Dante
+        // endpoint was rejected by upsert → the connection "clicked and vanished".
+        if Hydra.moduleSourceID(fromNodeID: point.nodeID) != nil {
+            return (0..<Hydra.moduleMaxChannels).contains(point.channelIndex)
+        }
+        if Hydra.moduleSinkID(fromNodeID: point.nodeID) != nil {
+            return (0..<Hydra.moduleMaxChannels).contains(point.channelIndex)
         }
         return false
     }
@@ -445,10 +466,18 @@ final class MatrixStore {
         control.sync {
             guard let data = try? Data(contentsOf: Self.saveURL),
                   let loaded = try? JSONDecoder().decode(PatchMatrix.self, from: data) else { return }
-            matrix = loaded
+            // Drop connections that reference channels the device no longer has
+            // (e.g. old 512-wire patches after the 512→256 resize) so the realtime
+            // path never indexes a wire that doesn't exist.
+            let kept = loaded.connections.filter {
+                endpointPlausible($0.source) && endpointPlausible($0.destination)
+            }
+            let dropped = loaded.connections.count - kept.count
+            matrix = PatchMatrix(connections: kept)
             for c in matrix.connections { assignSlotIfNeeded(c.id) }
             rebuildLocked()
-            log("Matrix restored: \(matrix.connections.count) connection(s)")
+            log("Matrix restored: \(matrix.connections.count) connection(s)" +
+                (dropped > 0 ? " (\(dropped) dropped — channels removed by the 512→256 resize)" : ""))
         }
     }
 
@@ -599,17 +628,27 @@ final class MatrixStore {
     private func runChannelMetering(inData: UnsafeMutablePointer<Float>,
                                     outData: UnsafeMutablePointer<Float>,
                                     inChans: Int, outChans: Int, frames: Int) {
-        if channelMeteringEnabled {
-            let nIn = min(inChans, Hydra.backplaneChannels)
-            let nOut = min(outChans, Hydra.backplaneChannels)
-            vDSP_vclr(inputPeaks, 1, vDSP_Length(Hydra.backplaneChannels))
-            vDSP_vclr(outputPeaks, 1, vDSP_Length(Hydra.backplaneChannels))
-            for frame in 0..<frames {
-                vDSP_vabs(inData + frame * inChans, 1, frameAbs, 1, vDSP_Length(nIn))
-                vDSP_vmax(frameAbs, 1, inputPeaks, 1, inputPeaks, 1, vDSP_Length(nIn))
-                vDSP_vabs(outData + frame * outChans, 1, frameAbs, 1, vDSP_Length(nOut))
-                vDSP_vmax(frameAbs, 1, outputPeaks, 1, outputPeaks, 1, vDSP_Length(nOut))
-            }
+        guard channelMeteringEnabled else { return }
+        // Signal LEDs need only on/off, read at ~6.7 Hz — so don't scan every
+        // audio buffer (~187 Hz). Throttle to ~every 2048 frames (≈20–45 Hz):
+        // this all-channels scan on the realtime thread was overloading audio
+        // (clicks/dropouts) once many interfaces were enabled. Stale peaks
+        // between runs are harmless — the daemon applies a release hold on top.
+        meteringAccum += frames
+        guard meteringAccum >= 2048 else { return }
+        meteringAccum = 0
+        let nIn = min(inChans, Hydra.backplaneChannels)
+        let nOut = min(outChans, Hydra.backplaneChannels)
+        // One strided max-magnitude pass per channel — far fewer vDSP calls than
+        // the old per-frame abs+max loop, and no scratch buffer.
+        var peak: Float = 0
+        for ch in 0..<nIn {
+            vDSP_maxmgv(inData + ch, vDSP_Stride(inChans), &peak, vDSP_Length(frames))
+            inputPeaks[ch] = peak
+        }
+        for ch in 0..<nOut {
+            vDSP_maxmgv(outData + ch, vDSP_Stride(outChans), &peak, vDSP_Length(frames))
+            outputPeaks[ch] = peak
         }
     }
 }

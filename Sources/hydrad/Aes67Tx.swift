@@ -52,26 +52,34 @@ final class Aes67Tx {
     private let pcm: UnsafeMutablePointer<Float>
     private var sequence: UInt16 = .random(in: 0...UInt16.max)
     private var timestamp: UInt32 = .random(in: 0...UInt32.max)
+    /// Set when PTP (re)locks: the next packet realigns its RTP timestamp
+    /// to the network clock (ts ≡ PTP seconds × rate, AES67 media clock).
+    private var needsPtpAlign = true
+    private var ptpAligned = false
     private let ssrc: UInt32 = .random(in: 0...UInt32.max)
     private let originIP: String
 
-    init?(interface iface: VirtualInterfaceInfo, rate: Double) {
-        guard iface.outChannels > 0 else { return nil }
-        // AES67 flows carry up to 8 channels; cap honestly and log.
-        let channels = min(iface.outChannels, 8)
-        if channels != iface.outChannels {
-            log("AES67 TX \"\(iface.name)\": capped at 8 of \(iface.outChannels) channels (AES67 flow limit)")
-        }
-        // Deterministic multicast group from the interface identity
+    /// One 8-channel flow (slice `flowIndex`) of the interface's Out side.
+    init?(interface iface: VirtualInterfaceInfo, flowIndex: Int, rate: Double) {
+        let start = flowIndex * 8
+        let channels = min(iface.outChannels - start, 8)
+        guard channels > 0 else { return nil }
+        // Flow name carries the channel range when the interface spans
+        // several flows ("Stage 1\u{2013}8", "Stage 9\u{2013}16", …).
+        let name = iface.outChannels <= 8
+            ? iface.name
+            : "\(iface.name) \(start + 1)\u{2013}\(start + channels)"
+        // Deterministic multicast group from the interface identity + slice
         // (239.69.x.y — the AES67 convention range).
         let bytes = [UInt8](iface.id.uuidString.utf8)
         let x = max(1, bytes[0] % 254)
-        let y = max(1, bytes[1] % 254)
+        let y = max(1, UInt8((Int(bytes[1]) + flowIndex) % 254))
         let address = "239.69.\(x).\(y)"
 
-        self.info = Aes67TxInfo(interfaceID: iface.id, name: iface.name,
-                                channels: channels, address: address, port: 5004)
-        self.tap = PoolTxTap(base: iface.outBase, channels: channels, rate: rate)
+        self.info = Aes67TxInfo(interfaceID: iface.id, name: name,
+                                channels: channels, address: address, port: 5004,
+                                flowIndex: flowIndex)
+        self.tap = PoolTxTap(base: iface.outBase + start, channels: channels, rate: rate)
         self.sampleRate = rate
         self.originIP = localIPv4Address()
         pcm = .allocate(capacity: packetFrames * channels)
@@ -96,7 +104,7 @@ final class Aes67Tx {
         timer.resume()
         sapTimer = timer
 
-        log("AES67 TX started: \"\(iface.name)\" → \(address):5004 (\(channels)ch L24 @ \(Int(rate)) Hz) — experimental, no PTP yet")
+        log("AES67 TX started: \"\(name)\" → \(address):5004 (\(channels)ch L24 @ \(Int(rate)) Hz) — experimental, no PTP yet")
     }
 
     deinit {
@@ -124,6 +132,18 @@ final class Aes67Tx {
         var next = Date()
         while running {
             tap.ring.readResampled(into: pcm, frames: packetFrames)
+
+            // AES67 media clock: when the PTP slave is locked, RTP
+            // timestamps follow the network clock (aligned once per lock —
+            // free-runs from there on our sample clock; receivers' buffers
+            // absorb the residual drift).
+            if needsPtpAlign, let ptpNow = PtpClock.shared.ptpTimeNow() {
+                timestamp = UInt32(truncatingIfNeeded:
+                    Int64((ptpNow * sampleRate).rounded()))
+                needsPtpAlign = false
+                ptpAligned = true
+                log("AES67 TX \"\(info.name)\": RTP timestamps aligned to PTP")
+            }
 
             var packet = [UInt8]()
             packet.reserveCapacity(12 + packetFrames * channels * 3)
@@ -161,10 +181,29 @@ final class Aes67Tx {
 
     // MARK: SAP/SDP
 
+    /// Real grandmaster when locked; zeros (traceability unknown) otherwise.
+    private var ptpRefclk: String {
+        let status = PtpClock.shared.status()
+        return status.locked
+            ? "\(status.grandmaster):\(status.domain)"
+            : "00-00-00-00-00-00-00-00:0"
+    }
+
+    /// Called by the manager when PTP lock changes.
+    func ptpChanged(locked: Bool) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            if locked && !self.ptpAligned {
+                self.needsPtpAlign = true
+            }
+            self.sendSAP(deletion: false)   // refresh SDP refclk immediately
+        }
+    }
+
     private var sdp: String {
         """
         v=0\r
-        o=- \(abs(info.interfaceID.hashValue % 1_000_000_000)) 0 IN IP4 \(originIP)\r
+        o=- \(abs((info.interfaceID.hashValue &+ info.flowIndex) % 1_000_000_000)) 0 IN IP4 \(originIP)\r
         s=\(info.name) (Hydra)\r
         c=IN IP4 \(info.address)/32\r
         t=0 0\r
@@ -173,7 +212,7 @@ final class Aes67Tx {
         a=rtpmap:96 L24/\(Int(sampleRate))/\(info.channels)\r
         a=recvonly\r
         a=ptime:1\r
-        a=ts-refclk:ptp=IEEE1588-2008:00-00-00-00-00-00-00-00:0\r
+        a=ts-refclk:ptp=IEEE1588-2008:\(ptpRefclk)\r
         a=mediaclk:direct=0\r
         """
     }
@@ -182,7 +221,7 @@ final class Aes67Tx {
         var packet = [UInt8]()
         packet.append(deletion ? 0x24 : 0x20)  // V=1, IPv4, (T=deletion)
         packet.append(0)                       // no auth
-        let hash = UInt16(truncatingIfNeeded: info.interfaceID.hashValue)
+        let hash = UInt16(truncatingIfNeeded: info.interfaceID.hashValue &+ info.flowIndex)
         packet.append(UInt8(hash >> 8))
         packet.append(UInt8(hash & 0xFF))
         let parts = originIP.split(separator: ".").compactMap { UInt8($0) }
@@ -200,7 +239,7 @@ final class Aes67TxManager {
 
     private let store: MatrixStore
     private let queue = DispatchQueue(label: "hydra.aes67.txmanager")
-    private var senders: [UUID: Aes67Tx] = [:]
+    private var senders: [String: Aes67Tx] = [:]   // "interfaceID:flowIndex" 
     /// Called when the set of transmitters changes.
     var onChange: (() -> Void)?
 
@@ -212,27 +251,46 @@ final class Aes67TxManager {
         queue.sync { senders.values.map(\.info).sorted { $0.name < $1.name } }
     }
 
-    /// Rebinds transmitters to the current interface list.
+    /// PTP lock transitions: realign running flows + refresh their SDP.
+    func ptpChanged(locked: Bool) {
+        queue.sync {
+            for tx in senders.values {
+                tx.ptpChanged(locked: locked)
+            }
+        }
+    }
+
+    /// Rebinds transmitters to the current interface list. Interfaces wider
+    /// than 8 channels are announced as several flows (the AES67 limit).
     func syncTx(interfaces: [VirtualInterfaceInfo]) {
         var changed = false
         queue.sync {
             let rate = BackplaneProbe.backplaneDeviceID()
                 .map(BackplaneProbe.nominalSampleRate) ?? Hydra.defaultSampleRate
-            let wanted = Dictionary(uniqueKeysWithValues:
-                interfaces.filter { $0.aes67TX && $0.outChannels > 0 }.map { ($0.id, $0) })
-
-            for (id, tx) in senders {
-                let current = wanted[id]
-                if current == nil || current!.outBase != tx.tap.base
-                    || min(current!.outChannels, 8) != tx.tap.channels {
-                    tx.stop()
-                    senders.removeValue(forKey: id)
-                    changed = true
+            // Desired flows: (key, interface, flowIndex).
+            var wanted: [String: (iface: VirtualInterfaceInfo, flow: Int)] = [:]
+            for iface in interfaces where iface.aes67TX && iface.outChannels > 0 {
+                let flowCount = (iface.outChannels + 7) / 8
+                for flow in 0..<flowCount {
+                    wanted["\(iface.id.uuidString):\(flow)"] = (iface, flow)
                 }
             }
-            for (id, iface) in wanted where senders[id] == nil {
-                if let tx = Aes67Tx(interface: iface, rate: rate) {
-                    senders[id] = tx
+
+            for (key, tx) in senders {
+                if let (iface, flow) = wanted[key] {
+                    let start = flow * 8
+                    let channels = min(iface.outChannels - start, 8)
+                    if iface.outBase + start == tx.tap.base && channels == tx.tap.channels {
+                        continue   // unchanged
+                    }
+                }
+                tx.stop()
+                senders.removeValue(forKey: key)
+                changed = true
+            }
+            for (key, want) in wanted where senders[key] == nil {
+                if let tx = Aes67Tx(interface: want.iface, flowIndex: want.flow, rate: rate) {
+                    senders[key] = tx
                     changed = true
                 }
             }

@@ -1,0 +1,401 @@
+// Hydra Audio — GPL-3.0
+// Device View patching — exactly the Dante Controller workflow.
+//
+// LEFT — Receive Channels of ONE device (picker): channel | connected to | signal.
+// RIGHT — Available Channels: device tree with filter; click/⇧/⌘ builds a
+// multi-selection. "Patch" lands the selection on consecutive receive channels
+// starting at the selected row; Unsubscribe clears rows.
+
+import SwiftUI
+import HydraCore
+
+struct DeviceViewPatch: View {
+    @EnvironmentObject private var client: DaemonClient
+    let sources: [GridView.GroupDef]
+    let destinations: [GridView.GroupDef]
+    @Binding var selection: GridSelection?
+    /// Mirrors the grid's Groups toggle: ON = devices collapse to their
+    /// header in Available Channels; OFF = flat tree.
+    let collapseByDevice: Bool
+    @Binding var expandedDevices: Set<String>
+
+    @State private var deviceID: String = ""
+    @State private var selectedReceiveIDs: Set<String> = []
+    @State private var receiveAnchorID: String?
+    @State private var selectedSourceIDs: Set<String> = []
+    @State private var sourceAnchorID: String?
+    @State private var filter = ""
+    @State private var dropTargetID: String?
+
+    private var device: GridView.GroupDef? {
+        destinations.first { $0.id == deviceID } ?? destinations.first
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            receivePane
+            availablePane
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Theme.Grid.panel))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.Grid.hairline, lineWidth: 0.5))
+        .onAppear {
+            if deviceID.isEmpty, let first = destinations.first {
+                deviceID = first.id
+            }
+        }
+    }
+
+    // MARK: Left — Receive Channels
+
+    private var receivePane: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("Receive Channels")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Picker("Device", selection: $deviceID) {
+                    ForEach(destinations.indices, id: \.self) { index in
+                        let group = destinations[index]
+                        Label(group.label, systemImage: group.icon).tag(group.id)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 190)
+            }
+
+            HStack(spacing: 0) {
+                Text("Channel").frame(width: 130, alignment: .leading)
+                Text("Connected to").frame(maxWidth: .infinity, alignment: .leading)
+                Text("Signal").frame(width: 46)
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Theme.Grid.textTertiary)
+            .padding(.horizontal, 8)
+
+            ScrollView {
+                VStack(spacing: 1) {
+                    if let device {
+                        ForEach(device.entries) { entry in
+                            receiveRow(entry, in: device.entries)
+                        }
+                    }
+                }
+            }
+
+            HStack {
+                Button("Unsubscribe") {
+                    unsubscribeSelected()
+                }
+                .keyboardShortcut(.delete, modifiers: [])
+                .disabled(!selectedReceiveHasConnections)
+                .help("Removes the patches of the selected receive channels (\u{2318}/\u{21E7}-click selects several) — or press \u{232B}")
+                Spacer()
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func receiveRow(_ entry: GridEntry, in channels: [GridEntry]) -> some View {
+        let isSelected = selectedReceiveIDs.contains(entry.id)
+        let connectedSources = sourcesConnected(to: entry)
+        return Button {
+            handleRowClick(entry, in: channels)
+        } label: {
+            HStack(spacing: 0) {
+                HStack(spacing: 6) {
+                    Image(systemName: "headphones")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.Grid.textTertiary)
+                    Text(entry.label)
+                        .font(.system(size: 13))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.Grid.textPrimary)
+                        .lineLimit(1)
+                }
+                .frame(width: 130, alignment: .leading)
+
+                Text(connectedSources.map(\.label).joined(separator: ", "))
+                    .font(.system(size: 12))
+                    .monospacedDigit()
+                    .foregroundStyle(connectedSources.isEmpty ? Theme.Grid.textTertiary : Theme.accent)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                SignalDotPublic(nodeID: entry.nodeID, channel: entry.channel, output: true)
+                    .frame(width: 46)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(RoundedRectangle(cornerRadius: 5)
+                .fill(dropTargetID == entry.id ? Theme.accent.opacity(0.28)
+                      : isSelected ? Theme.accent.opacity(0.18) : Theme.Grid.cellRest))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(connectedSources.isEmpty ? "No subscription — drag transmitter channels here"
+                                       : connectedSources.map(\.label).joined(separator: ", "))
+        // Dante Controller gesture: drop the dragged transmitter selection
+        // here — channels land on consecutive rows starting at this one.
+        .dropDestination(for: String.self) { items, _ in
+            let ids = items.flatMap { $0.split(separator: "\n").map(String.init) }
+            let flat = filteredSources.flatMap(\.entries)
+            let picked = flat.filter { ids.contains($0.id) }
+            guard !picked.isEmpty else { return false }
+            assign(picked, startingAt: entry)
+            selectedSourceIDs = []
+            return true
+        } isTargeted: { targeted in
+            dropTargetID = targeted ? entry.id : (dropTargetID == entry.id ? nil : dropTargetID)
+        }
+    }
+
+    private func handleRowClick(_ entry: GridEntry, in channels: [GridEntry]) {
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.shift),
+           let anchor = receiveAnchorID,
+           let a = channels.firstIndex(where: { $0.id == anchor }),
+           let b = channels.firstIndex(where: { $0.id == entry.id }) {
+            selectedReceiveIDs.formUnion(channels[min(a, b)...max(a, b)].map(\.id))
+        } else if flags.contains(.command) {
+            if selectedReceiveIDs.contains(entry.id) {
+                selectedReceiveIDs.remove(entry.id)
+            } else {
+                selectedReceiveIDs.insert(entry.id)
+            }
+            receiveAnchorID = entry.id
+        } else {
+            selectedReceiveIDs = [entry.id]
+            receiveAnchorID = entry.id
+        }
+        // Feed the channel strip with the first patch of this row.
+        if let source = sourcesConnected(to: entry).first {
+            selection = GridSelection(source: source, destination: entry)
+        }
+    }
+
+    private var selectedReceiveHasConnections: Bool {
+        guard let device else { return false }
+        return device.entries.contains { entry in
+            selectedReceiveIDs.contains(entry.id) && !sourcesConnected(to: entry).isEmpty
+        }
+    }
+
+    private func unsubscribeSelected() {
+        guard let device else { return }
+        for entry in device.entries where selectedReceiveIDs.contains(entry.id) {
+            for source in sourcesConnected(to: entry) {
+                client.disconnectCell(source: source, destination: entry)
+            }
+        }
+    }
+
+    // MARK: Right — Available Channels
+
+    private var availablePane: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Available Channels")
+                .font(.system(size: 13, weight: .semibold))
+            TextField("Filter", text: $filter)
+                .textFieldStyle(.roundedBorder)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(filteredSources.indices, id: \.self) { index in
+                        let group = filteredSources[index]
+                        let isExpanded = !collapseByDevice
+                            || expandedDevices.contains(group.id)
+                            || !filter.isEmpty
+                        Button {
+                            guard collapseByDevice else { return }
+                            if expandedDevices.contains(group.id) {
+                                expandedDevices.remove(group.id)
+                            } else {
+                                expandedDevices.insert(group.id)
+                            }
+                        } label: {
+                            HStack(spacing: 5) {
+                                if collapseByDevice {
+                                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                                        .font(.system(size: 8.5, weight: .bold))
+                                        .foregroundStyle(Theme.Grid.textTertiary)
+                                }
+                                Image(systemName: group.icon)
+                                    .font(.system(size: 10))
+                                Text(group.label)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .foregroundStyle(Theme.Grid.textSecondary)
+                            .padding(.top, 4)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        if isExpanded {
+                            ForEach(group.entries) { entry in
+                                sourceRow(entry)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !selectedSourceIDs.isEmpty {
+                Text("\(selectedSourceIDs.count) selected — drag onto a receive channel; they land in sequence")
+                    .font(.system(size: 11))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Select channels (\u{21E7} for a range) and DRAG them onto a receive channel — they land in sequence. \u{232B} removes the selected rows' patches.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(width: 250)
+    }
+
+    private func sourceRow(_ entry: GridEntry) -> some View {
+        let isSelected = selectedSourceIDs.contains(entry.id)
+        return Button {
+            handleSourceClick(entry)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "waveform")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Theme.Grid.textTertiary)
+                Text(entry.label)
+                    .font(.system(size: 13))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+            .background(RoundedRectangle(cornerRadius: 5)
+                .fill(isSelected ? Theme.accent.opacity(0.18) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .draggable(dragPayload(for: entry))
+    }
+
+    private func dragPayload(for entry: GridEntry) -> String {
+        if selectedSourceIDs.contains(entry.id) {
+            return orderedSelection.map(\.id).joined(separator: "\n")
+        }
+        return entry.id
+    }
+
+    private var orderedSelection: [GridEntry] {
+        filteredSources.flatMap(\.entries).filter { selectedSourceIDs.contains($0.id) }
+    }
+
+    private func handleSourceClick(_ entry: GridEntry) {
+        let flags = NSEvent.modifierFlags
+        let flat = filteredSources.flatMap(\.entries)
+        if flags.contains(.shift),
+           let anchor = sourceAnchorID,
+           let a = flat.firstIndex(where: { $0.id == anchor }),
+           let b = flat.firstIndex(where: { $0.id == entry.id }) {
+            selectedSourceIDs.formUnion(flat[min(a, b)...max(a, b)].map(\.id))
+        } else if flags.contains(.command) {
+            if selectedSourceIDs.contains(entry.id) {
+                selectedSourceIDs.remove(entry.id)
+            } else {
+                selectedSourceIDs.insert(entry.id)
+            }
+            sourceAnchorID = entry.id
+        } else {
+            selectedSourceIDs = [entry.id]
+            sourceAnchorID = entry.id
+        }
+        if sourceAnchorID == nil {
+            sourceAnchorID = entry.id
+        }
+    }
+
+    // MARK: Batch patch
+
+    /// Lands `picked` on consecutive receive channels starting at `first`.
+    private func assign(_ picked: [GridEntry], startingAt first: GridEntry) {
+        guard let device,
+              let startIndex = device.entries.firstIndex(of: first) else { return }
+        var last: GridSelection?
+        for (offset, source) in picked.enumerated() {
+            let index = startIndex + offset
+            guard index < device.entries.count else { break }
+            client.connectCell(source: source, destination: device.entries[index])
+            last = GridSelection(source: source, destination: device.entries[index])
+        }
+        if let last {
+            selection = last
+        }
+    }
+
+    // MARK: Lookups
+
+    private func sourcesConnected(to destination: GridEntry) -> [GridEntry] {
+        let byID = Dictionary(uniqueKeysWithValues:
+            sources.flatMap(\.entries).map { ($0.id, $0) })
+        return client.connections
+            .filter { $0.destination == destination.point }
+            .compactMap { conn -> GridEntry? in
+                let id = "\(conn.source.nodeID):\(conn.source.channelIndex)"
+                if let entry = byID[id] { return entry }
+                return GridEntry(nodeID: conn.source.nodeID,
+                                 channels: [conn.source.channelIndex],
+                                 label: "\(conn.source.nodeID) \(conn.source.channelIndex + 1)",
+                                 shortLabel: "\(conn.source.channelIndex + 1)")
+            }
+            .sorted { $0.label < $1.label }
+    }
+
+    private var filteredSources: [GridView.GroupDef] {
+        guard !filter.isEmpty else { return sources }
+        return sources.compactMap { group in
+            let entries = group.entries.filter {
+                $0.label.localizedCaseInsensitiveContains(filter)
+            }
+            return entries.isEmpty ? nil : (group.id, group.label, group.icon, entries)
+        }
+    }
+}
+
+// MARK: - Signal dot (usable outside GridView)
+
+/// Signal dot — observes the 10 Hz flags + meter peaks directly.
+/// Used by DeviceViewPatch rows and anywhere else a live signal indicator is needed.
+struct SignalDotPublic: View {
+    @EnvironmentObject private var signals: SignalFlags
+    @EnvironmentObject private var meters: ConnMeters
+    let nodeID: String
+    let channel: Int
+    let output: Bool
+    /// Non-backplane lanes (apps, NDI, AES67) have no channel meter — their
+    /// dot lights from the post-gain peaks of their connections instead.
+    var connIDs: [String] = []
+
+    var body: some View {
+        let hasSignal: Bool
+        if nodeID == Hydra.backplaneNodeID {
+            let flags = output ? signals.outputs : signals.inputs
+            hasSignal = channel < flags.count && flags[channel]
+        } else {
+            hasSignal = connIDs.contains { (meters.peaks[$0] ?? 0) > DaemonClient.signalThreshold }
+        }
+        return Circle()
+            .fill(hasSignal ? Theme.live : Theme.Grid.noSignal)
+            .frame(width: 5, height: 5)
+            .shadow(color: hasSignal ? Theme.live.opacity(0.7) : .clear, radius: 2)
+            .help(hasSignal ? "Signal present" : "No signal")
+    }
+}

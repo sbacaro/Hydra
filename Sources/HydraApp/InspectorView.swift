@@ -1,10 +1,16 @@
 // Hydra Audio — GPL-3.0
-// The side panel as a DAW channel strip (Logic-style), top-to-bottom signal
-// flow for the selected source channel:
-//   input (name, mono/stereo) → insert slots → trim → output section
-//   (the selected connection: gain, meter, remove).
-// Insert slots: click an empty slot to search plugins by name; click a loaded
-// slot to open the plugin's editor window; ✕ removes it.
+// Channel strip inspector — DAW-style Logic signal flow:
+//   input → insert slots → trim → output section (gain, meter, remove).
+//
+// Apple HIG changes vs previous version:
+//   • No longer laid out in a manual HStack — the .inspector() modifier in
+//     ContentView gives us a proper macOS trailing panel with system chrome.
+//   • Removed .padding(.top, 52) alignment hack (inspector handles its own insets).
+//   • Background is now .regularMaterial (or omitted — the system inspector
+//     panel already has the correct material behind it on macOS 26).
+//   • Dividers are native Divider() — no manual Color.white.opacity overlay.
+//   • Text uses semantic colors (.primary, .secondary, .tertiary) everywhere.
+//   • .buttonStyle(.bordered) for destructive action; .borderedProminent for primary.
 
 import SwiftUI
 import AppKit
@@ -13,35 +19,171 @@ import HydraCore
 struct InspectorView: View {
     @EnvironmentObject private var client: DaemonClient
     @Binding var selection: GridSelection?
+    @Binding var channelFocus: ChannelFocus?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header — flush with the inspector chrome.
+            HStack {
+                Text("Channel")
+                    .font(.headline)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            // Content — a selected cross-point shows both ends; a clicked channel
+            // name shows that single channel's strip.
+            if let sel = selection {
+                ScrollView {
+                    ChannelStrip(selection: sel, clearSelection: { selection = nil })
+                        .padding(16)
+                }
+            } else if let focus = channelFocus {
+                ScrollView {
+                    SingleChannelStrip(focus: focus)
+                        .padding(16)
+                }
+            } else {
+                ContentUnavailableView {
+                    Label("No Selection", systemImage: "rectangle.dashed")
+                } description: {
+                    Text("Click a cell, or a channel's name, to open its channel strip.")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+/// Channel name → node display name (interface / device / app / stream).
+@MainActor
+private func channelNodeName(_ nodeID: String, client: DaemonClient) -> String {
+    if nodeID == Hydra.backplaneNodeID {
+        return client.status?.backplaneDeviceName ?? Hydra.backplaneDeviceName
+    }
+    if let uid = Hydra.deviceUID(fromNodeID: nodeID),
+       let device = client.devices.first(where: { $0.uid == uid }) {
+        return device.name
+    }
+    if let app = client.apps.first(where: { $0.nodeID == nodeID }) {
+        return app.name
+    }
+    if let stream = client.aes67.streams.first(where: { $0.nodeID == nodeID }) {
+        return stream.name
+    }
+    return nodeID
+}
+
+// MARK: - Single channel strip (opened by clicking a channel name)
+
+private struct SingleChannelStrip: View {
+    @EnvironmentObject private var client: DaemonClient
+    let focus: ChannelFocus
+
+    private var entry: GridEntry { focus.entry }
+    private var base: Int { entry.channel & ~1 }
+    private var isStereoLinked: Bool {
+        client.stereoLinked(nodeID: entry.nodeID, evenChannel: base)
+    }
+    private var strip: StripInfo {
+        client.effectiveStrip(forNode: entry.nodeID, channel: entry.channel, stereo: isStereoLinked)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Channel")
-                .font(.system(size: 14, weight: .semibold))
-
-            if let selection {
-                ChannelStrip(selection: selection, clearSelection: { self.selection = nil })
-            } else {
-                Text("Select a cell in the grid to open its channel strip.")
-                    .font(.system(size: 13))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(focus.scope == .input ? "Transmitter" : "Receiver")
+                    .font(.caption.weight(.semibold))
+                    .textCase(.uppercase)
                     .foregroundStyle(.secondary)
+                RenameableChannelLabel(entry: entry, scope: focus.scope,
+                                       font: .title3.weight(.semibold))
+                Text(channelNodeName(entry.nodeID, client: client))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            Spacer(minLength: 0)
+
+            Toggle("Stereo (\(base + 1)–\(base + 2))", isOn: Binding(
+                get: { isStereoLinked },
+                set: { client.setStereoLink(nodeID: entry.nodeID, channel: entry.channel, linked: $0) }))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .font(.callout)
+                .help("Links these two channels as one stereo pair (L/R) — they patch and unpatch together.")
+
+            // Inserts (Audio FX) live on the transmitter (source) side only.
+            if focus.scope == .input {
+                Divider()
+                InsertsSection(strip: strip)
+            }
         }
-        .padding(16)
-        .frame(width: 264)
-        .frame(maxHeight: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color.white.opacity(0.045))
-        )
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.hairline, lineWidth: 0.5))
-        // Match the grid square's vertical span: its panel sits below the
-        // control bar (16 outer + ~26 bar + 10 spacing) and 16 above the
-        // status bar.
-        .padding(.top, 52)
-        .padding(.bottom, 16)
-        .padding(.trailing, 16)
+    }
+}
+
+// MARK: - Inserts (Audio FX) — shared by the cell strip and the single-channel strip
+
+private struct InsertsSection: View {
+    @EnvironmentObject private var client: DaemonClient
+    let strip: StripInfo
+    @State private var pickerPresented = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Audio FX")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            ForEach(Array(strip.inserts.enumerated()), id: \.offset) { index, plugin in
+                HStack(spacing: 6) {
+                    Button {
+                        client.openPluginEditor(stripID: strip.id, index: index)
+                    } label: {
+                        Text(plugin.name)
+                            .font(.callout.weight(.semibold))
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .help("Open \(plugin.name)'s editor")
+
+                    Button {
+                        var updated = strip
+                        updated.inserts.remove(at: index)
+                        client.setStrip(updated)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Remove insert")
+                }
+            }
+
+            Button {
+                pickerPresented = true
+            } label: {
+                Label("Insert…", systemImage: "plus")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Add a plugin to this channel")
+            .popover(isPresented: $pickerPresented) {
+                PluginPicker { plugin in
+                    var updated = strip
+                    updated.inserts.append(plugin)
+                    client.setStrip(updated)
+                    pickerPresented = false
+                }
+                .environmentObject(client)
+            }
+        }
     }
 }
 
@@ -54,13 +196,41 @@ private struct ChannelStrip: View {
 
     @State private var pickerSlotPresented = false
 
+    private var sourceBase: Int { selection.source.channel & ~1 }
+    private var isStereoLinked: Bool {
+        client.stereoLinked(nodeID: selection.source.nodeID, evenChannel: sourceBase)
+    }
     private var strip: StripInfo {
         client.effectiveStrip(forNode: selection.source.nodeID,
-                              channel: selection.source.channel)
+                              channel: selection.source.channel,
+                              stereo: isStereoLinked)
     }
 
-    private var isApp: Bool {
-        Hydra.appKey(fromNodeID: selection.source.nodeID) != nil
+    private var destBase: Int { selection.destination.channel & ~1 }
+    private var destStereoLinked: Bool {
+        client.stereoLinked(nodeID: selection.destination.nodeID, evenChannel: destBase)
+    }
+
+    /// Small uppercase caption that labels each end of the patch (Transmitter /
+    /// Receiver), so it's always clear which side you're configuring.
+    private func sectionCaption(_ text: String) -> some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .textCase(.uppercase)
+            .foregroundStyle(.secondary)
+    }
+
+    /// A labeled stereo switch for one end of the patch. Linking pairs the even+odd
+    /// channels into one stereo lane (·St) so they patch/unpatch together (L/R).
+    private func stereoToggle(nodeID: String, channel: Int, base: Int,
+                              linked: Bool, hint: String) -> some View {
+        Toggle("Stereo (\(base + 1)–\(base + 2))", isOn: Binding(
+            get: { linked },
+            set: { client.setStereoLink(nodeID: nodeID, channel: channel, linked: $0) }))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .font(.callout)
+            .help(hint)
     }
 
     private var nodeName: String {
@@ -82,24 +252,33 @@ private struct ChannelStrip: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            // ── Input ────────────────────────────────────────────────
+        VStack(alignment: .leading, spacing: 16) {
+
+            // ── Transmitter (source of the selected cell) ───────────────
             VStack(alignment: .leading, spacing: 3) {
-                Text(selection.source.label)
-                    .font(.system(.title3).weight(.semibold))
-                    .lineLimit(1)
+                sectionCaption("Transmitter")
+                RenameableChannelLabel(entry: selection.source, scope: .input,
+                                       font: .title3.weight(.semibold))
                 Text(nodeName)
-                    .font(.system(size: 13))
+                    .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
 
-            Divider().overlay(Color.white.opacity(0.1))
+            // Stereo pairing for the transmitter (odd+even). A linked pair becomes
+            // one stereo lane in the grid and feeds stereo inserts L/R.
+            stereoToggle(nodeID: selection.source.nodeID,
+                         channel: selection.source.channel,
+                         base: sourceBase,
+                         linked: isStereoLinked,
+                         hint: "Links these two transmitter channels as one stereo pair (L/R) — they patch and unpatch together, and stereo inserts process both.")
 
-            // ── Inserts (Audio FX) ──────────────────────────────────
-            VStack(alignment: .leading, spacing: 6) {
+            Divider()
+
+            // ── Inserts (Audio FX) ──────────────────────────────────────
+            VStack(alignment: .leading, spacing: 8) {
                 Text("Audio FX")
-                    .font(.system(size: 13))
+                    .font(.callout)
                     .foregroundStyle(.secondary)
 
                 ForEach(Array(strip.inserts.enumerated()), id: \.offset) { index, plugin in
@@ -108,16 +287,12 @@ private struct ChannelStrip: View {
                             client.openPluginEditor(stripID: strip.id, index: index)
                         } label: {
                             Text(plugin.name)
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.callout.weight(.semibold))
                                 .lineLimit(1)
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 5)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(Theme.accent.opacity(0.55))
-                                )
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
                         .help("Open \(plugin.name)'s editor")
 
                         Button {
@@ -126,37 +301,23 @@ private struct ChannelStrip: View {
                             client.setStrip(updated)
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
                         .help("Remove insert")
                     }
                 }
 
-                // Empty slot
+                // Empty slot — dashed outline follows the system's bordered style.
                 Button {
                     pickerSlotPresented = true
                 } label: {
-                    HStack {
-                        Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .bold))
-                        Text("Insert…")
-                            .font(.system(size: 13))
-                    }
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.white.opacity(0.15), style: StrokeStyle(lineWidth: 1, dash: [4]))
-                    )
+                    Label("Insert…", systemImage: "plus")
+                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.plain)
-                .disabled(client.vst.available.isEmpty)
-                .help(client.vst.available.isEmpty
-                      ? "No VST3 plugins found in /Library/Audio/Plug-Ins/VST3"
-                      : "Add a plugin to this channel")
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Add a plugin to this channel")
                 .popover(isPresented: $pickerSlotPresented) {
                     PluginPicker { plugin in
                         var updated = strip
@@ -168,28 +329,36 @@ private struct ChannelStrip: View {
                 }
             }
 
-            Divider().overlay(Color.white.opacity(0.1))
+            Divider()
 
-            // ── Output (the selected cell, possibly a stereo group) ──
-            let cellConns = client.cellConnections(source: selection.source,
-                                                   destination: selection.destination)
-            if !cellConns.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 4) {
+            // ── Receiver (destination of the selected cell) ─────────────
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    sectionCaption("Receiver")
+                    HStack(spacing: 5) {
                         Image(systemName: "arrow.turn.down.right")
                             .font(.system(size: 12))
-                            .foregroundStyle(Theme.accent)
-                        Text(selection.destination.label)
-                            .font(.system(size: 13, weight: .semibold))
-                            .lineLimit(1)
+                            .foregroundStyle(Color.accentColor)
+                        RenameableChannelLabel(entry: selection.destination, scope: .output,
+                                               font: .callout.weight(.semibold))
                     }
+                }
 
-                    HStack(alignment: .top, spacing: 12) {
-                        LogicVUMeter(meters: client.meters, connectionIDs: cellConns.map(\.id))
-                            .frame(height: 118)
-                        VStack(alignment: .leading, spacing: 10) {
-                            CellGainSlider(connections: cellConns, selection: selection)
-                        }
+                // The other half of a true stereo patch. Turn Stereo on at BOTH
+                // ends and the cross-point routes L→L / R→R as one linked pair.
+                stereoToggle(nodeID: selection.destination.nodeID,
+                             channel: selection.destination.channel,
+                             base: destBase,
+                             linked: destStereoLinked,
+                             hint: "Links these two receiver channels as one stereo pair — they patch and unpatch together (L→L, R→R).")
+
+                let cellConns = client.cellConnections(source: selection.source,
+                                                       destination: selection.destination)
+                if !cellConns.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        CellGainSlider(connections: cellConns, selection: selection)
+                        SignalIndicator(meters: client.meters, connectionIDs: cellConns.map(\.id))
+                            .frame(maxWidth: .infinity)
                     }
 
                     Button(role: .destructive) {
@@ -200,18 +369,78 @@ private struct ChannelStrip: View {
                         Label("Remove connection", systemImage: "trash")
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.glass)
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("No connection at this cross-point yet.")
+                            .font(.callout)
+                            .foregroundStyle(.tertiary)
+                        Button {
+                            client.connectCell(source: selection.source,
+                                               destination: selection.destination)
+                        } label: {
+                            Label("Connect", systemImage: "cable.connector")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.regular)
+                        .help("Patch \(selection.source.label) → \(selection.destination.label)\(selection.source.isStereo || selection.destination.isStereo ? " (stereo)" : "").")
+                    }
                 }
-            } else {
-                Text("No connection at this cross-point.\nClick the cell again to create one.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.tertiary)
             }
         }
     }
 }
 
-// MARK: - Plugin picker (Logic-style searchable list)
+// MARK: - Renameable channel label
+
+private struct RenameableChannelLabel: View {
+    @EnvironmentObject private var client: DaemonClient
+    let entry: GridEntry
+    let scope: ChannelScope
+    let font: Font
+
+    @State private var editing = false
+    @State private var draft   = ""
+
+    private var isRenameable: Bool { entry.nodeID == Hydra.backplaneNodeID }
+    private var displayed: String {
+        client.labels.label(scope, entry.channel) ?? entry.label
+    }
+
+    var body: some View {
+        if editing {
+            TextField("Channel name", text: $draft)
+                .textFieldStyle(.roundedBorder)
+                .font(.callout)
+                .onSubmit {
+                    let trimmed = draft.trimmingCharacters(in: .whitespaces)
+                    client.setLabel(scope, entry.channel, trimmed.isEmpty ? nil : trimmed)
+                    editing = false
+                }
+                .onExitCommand { editing = false }
+        } else {
+            HStack(spacing: 5) {
+                Text(displayed).font(font).lineLimit(1)
+                if isRenameable {
+                    Button {
+                        draft   = client.labels.label(scope, entry.channel) ?? ""
+                        editing = true
+                    } label: {
+                        Image(systemName: "pencil")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Rename this channel (empty = back to the interface name)")
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Plugin picker
 
 private struct PluginPicker: View {
     @EnvironmentObject private var client: DaemonClient
@@ -219,222 +448,215 @@ private struct PluginPicker: View {
     @State private var search = ""
 
     private var filtered: [VSTPlugin] {
+        let base  = client.vst.pickerPlugins()
         let query = search.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !query.isEmpty else { return client.vst.available }
-        return client.vst.available.filter {
+        guard !query.isEmpty else { return base }
+        return base.filter {
             $0.name.lowercased().contains(query) || $0.vendor.lowercased().contains(query)
         }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.tertiary)
-                TextField("Search plugins…", text: $search)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-            }
-            .padding(8)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.06)))
-
-            if filtered.isEmpty {
-                Text("Nothing matches \"\(search)\".")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.tertiary)
+        VStack(alignment: .leading, spacing: 10) {
+            if client.vst.scanning {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Scanning VST3 plugins…")
+                        .font(.callout.weight(.semibold))
+                    ProgressView(value: client.vst.scanProgress)
+                        .progressViewStyle(.linear)
+                    Text(client.vst.scanLabel)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.vertical, 4)
+            } else if client.vst.available.isEmpty && client.vst.scannedAt == nil {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Hydra hasn't scanned your plugins yet.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        client.scanVST()
+                    } label: {
+                        Label("Scan VST3 plugins", systemImage: "magnifyingglass")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    Text("Looks in /Library/Audio/Plug-Ins/VST3 and ~/Library/Audio/Plug-Ins/VST3.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else if client.vst.available.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("No VST3 plugins found.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        client.scanVST()
+                    } label: {
+                        Label("Rescan", systemImage: "arrow.clockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    Text("Install plugins into /Library/Audio/Plug-Ins/VST3 and rescan.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(filtered) { plugin in
-                            Button {
-                                onSelect(plugin)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 1) {
+                // Search field — uses the native .roundedBorder style.
+                TextField("Search plugins…", text: $search)
+                    .textFieldStyle(.roundedBorder)
+
+                if filtered.isEmpty {
+                    Text("Nothing matches \"\(search)\".")
+                        .font(.callout)
+                        .foregroundStyle(.tertiary)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(filtered) { plugin in
+                                Button {
+                                    onSelect(plugin)
+                                } label: {
                                     Text(plugin.name)
-                                        .font(.system(size: 13, weight: .semibold))
+                                        .font(.callout)
                                         .lineLimit(1)
-                                    Text(plugin.vendor)
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.tertiary)
-                                        .lineLimit(1)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.vertical, 3)
+                                        .padding(.horizontal, 6)
+                                        .contentShape(Rectangle())
                                 }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.vertical, 4)
-                                .padding(.horizontal, 6)
-                                .contentShape(Rectangle())
+                                .buttonStyle(.plain)
+                                .help(plugin.vendor)
                             }
-                            .buttonStyle(.plain)
                         }
                     }
+                    .frame(maxHeight: 380)
                 }
-                .frame(maxHeight: 260)
             }
         }
-        .padding(12)
-        .frame(width: 240)
+        .padding(14)
+        .frame(width: 260)
     }
 }
 
-// MARK: - Logic Pro-style VU meter
-// Vertical segmented LED bars — one per channel (two when the cell is a
-// stereo group) — with peak-hold lines and clip latches at the top.
-// Sole observer of the 10 Hz ConnMeters object.
+// MARK: - Logic VU meter
 
-private struct LogicVUMeter: View {
+/// Channel-strip signal indicator — a copy of the grid pin's on/off state shown
+/// as a speaker symbol: lit when audio is flowing through the connection, dimmed
+/// when silent. No metering, no animation; it only changes when on/off flips
+/// (rare), so it costs nothing while the audio plays.
+private struct SignalIndicator: View {
     @ObservedObject var meters: ConnMeters
     let connectionIDs: [String]
 
-    @State private var holds: [CGFloat] = [0, 0]
-    @State private var clips: [Bool] = [false, false]
-
-    private static let floorDB: Float = -60
-
-    private func fraction(_ peak: Float) -> CGFloat {
-        let db = Gain.decibels(fromLinear: peak)
-        return CGFloat(min(max((db - Self.floorDB) / (0 - Self.floorDB), 0), 1))
-    }
+    private var on: Bool { connectionIDs.contains { (meters.peaks[$0] ?? 0) > 0 } }
 
     var body: some View {
-        VStack(spacing: 3) {
-            // Clip LEDs (click to reset)
-            HStack(spacing: 3) {
-                ForEach(connectionIDs.indices, id: \.self) { index in
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(clips[safe: index] == true ? Theme.clip : Color.white.opacity(0.10))
-                        .frame(width: 7, height: 4)
-                        .shadow(color: clips[safe: index] == true ? Theme.clip.opacity(0.8) : .clear,
-                                radius: 2)
-                }
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { clips = [false, false] }
-            .help("Clip indicators — light when a channel exceeds 0 dBFS. Click to reset.")
-
-            GeometryReader { geo in
-                HStack(alignment: .bottom, spacing: 3) {
-                    ForEach(connectionIDs.indices, id: \.self) { index in
-                        bar(level: fraction(meters.peaks[connectionIDs[index]] ?? 0),
-                            hold: holds[safe: index] ?? 0,
-                            height: geo.size.height)
-                    }
-                }
-            }
-            .frame(width: connectionIDs.count > 1 ? 17 : 7)
+        HStack(spacing: 6) {
+            Image(systemName: on ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(on ? Theme.live : Color.secondary)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 18, alignment: .leading)
+            Text(on ? "Signal present" : "No signal")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
         }
-        .onChange(of: meters.peaks) { _, newPeaks in
-            for index in connectionIDs.indices where index < 2 {
-                let peak = newPeaks[connectionIDs[index]] ?? 0
-                let frac = fraction(peak)
-                holds[index] = max(frac, holds[index] - 0.035) // peak hold w/ decay
-                if Gain.decibels(fromLinear: peak) > 0 { clips[index] = true }
-            }
-        }
-        .help("Post-gain level (Logic-style VU)")
-    }
-
-    /// One segmented LED bar.
-    private func bar(level: CGFloat, hold: CGFloat, height: CGFloat) -> some View {
-        let segmentHeight: CGFloat = 3
-        let segmentGap: CGFloat = 1
-        let count = max(1, Int(height / (segmentHeight + segmentGap)))
-        return ZStack(alignment: .bottom) {
-            VStack(spacing: segmentGap) {
-                ForEach((0..<count).reversed(), id: \.self) { segment in
-                    let segFrac = CGFloat(segment + 1) / CGFloat(count)
-                    let lit = segFrac <= level
-                    RoundedRectangle(cornerRadius: 0.8)
-                        .fill(lit ? segmentColor(segFrac) : Color.white.opacity(0.06))
-                        .frame(width: 7, height: segmentHeight)
-                }
-            }
-            // Peak-hold line
-            if hold > 0.01 {
-                Rectangle()
-                    .fill(Color.white.opacity(0.85))
-                    .frame(width: 7, height: 1.5)
-                    .offset(y: -(height * hold - 1))
-            }
-        }
-        .frame(height: height, alignment: .bottom)
-    }
-
-    private func segmentColor(_ frac: CGFloat) -> Color {
-        if frac > 0.92 { return Theme.warning }      // top: amber (near 0 dBFS)
-        if frac > 0.72 { return Theme.meterYellow }  // upper: yellow
-        return Theme.live                            // body: green
+        .animation(.easeInOut(duration: 0.15), value: on)
+        .help("Signal indicator — lit when audio is passing through this connection")
     }
 }
 
-private extension Array {
-    subscript(safe index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
-    }
-}
-
-// MARK: - Gain slider (cell gain — drives every underlying connection)
+// MARK: - Gain slider
 
 private struct CellGainSlider: View {
     @EnvironmentObject private var client: DaemonClient
     let connections: [Connection]
     let selection: GridSelection
 
-    @State private var gainDB: Double = 0
-    @State private var loadedID: String = ""
+    // Gain in dB, wrapped in the shared optimistic/echo-safe primitive. A 0.05 dB
+    // tolerance recognises the daemon's round-tripped echo of our own write.
+    @StateObject private var gain = SyncedValue<Double>(0, equal: { abs($0 - $1) < 0.05 })
+    @State private var loadedID = ""
 
     private var cellID: String {
         "\(selection.source.id)>\(selection.destination.id)"
+    }
+    private var serverDB: Double {
+        Double(Gain.decibels(fromLinear: connections.first?.gain ?? 1.0))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text("Gain")
-                    .font(.system(size: 13))
+                    .font(.callout)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("0 dB") { gainDB = 0 }
+                Button("0 dB") {
+                    gain.userSet(0)
+                    NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+                }
                     .buttonStyle(.plain)
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.tertiary)
                     .help("Reset gain to unity")
-                Text(String(format: "%+.1f dB", gainDB))
-                    .font(.system(size: 13)).monospacedDigit()
+                Text(String(format: "%+.1f dB", gain.value))
+                    .font(.callout)
+                    .monospacedDigit()
                     .frame(width: 60, alignment: .trailing)
             }
-            Slider(value: $gainDB, in: -60...12, step: 0.5)
-                // Logic behavior: ⌥-click snaps the fader back to 0 dB.
+            Slider(value: gain.binding, in: -60...12, step: 0.5) { editing in
+                editing ? gain.beginEditing() : gain.endEditing()
+            }
                 .simultaneousGesture(TapGesture().onEnded {
                     if NSEvent.modifierFlags.contains(.option) {
-                        gainDB = 0
+                        gain.userSet(0)
+                        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
                     }
                 })
-                .onChange(of: gainDB) { previous, current in
-                    // Logic-style trackpad feedback: subtle tick on every
-                    // step while dragging, stronger detent crossing 0 dB.
+                // Haptics only while the user is dragging (never on remote echoes).
+                .onChange(of: gain.value) { previous, current in
+                    guard gain.isEditing else { return }
                     if (previous < 0 && current >= 0) || (previous > 0 && current <= 0) {
-                        NSHapticFeedbackManager.defaultPerformer
-                            .perform(.alignment, performanceTime: .default)
-                    } else if previous != current {
-                        NSHapticFeedbackManager.defaultPerformer
-                            .perform(.levelChange, performanceTime: .default)
+                        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+                    } else {
+                        NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .default)
                     }
-                    push()
                 }
         }
-        .onAppear { load() }
-        .onChange(of: cellID) { _, _ in load() }
+        .onAppear {
+            bindPush()
+            loadedID = cellID
+            gain.adopt(serverDB)
+        }
+        // Retargeted to a different cell — re-point the push and hard-adopt its gain.
+        .onChange(of: cellID) { _, _ in
+            bindPush()
+            loadedID = cellID
+            gain.adopt(serverDB)
+        }
+        // Daemon echo / external change — reconciled by SyncedValue.
+        .onChange(of: connections.first?.gain) { _, _ in
+            gain.remote(serverDB)
+        }
     }
 
-    private func load() {
-        guard loadedID != cellID else { return }
-        loadedID = cellID
-        gainDB = Double(Gain.decibels(fromLinear: connections.first?.gain ?? 1.0))
-    }
-
-    private func push() {
-        client.setCellGain(source: selection.source,
-                           destination: selection.destination,
-                           gain: Gain.linear(fromDecibels: Float(gainDB)))
+    /// (Re)bind the push target to the CURRENT cell. Captures only the daemon
+    /// reference and the two endpoints — never `self` or `gain` — so the closure
+    /// stored on `gain` can't create a retain cycle.
+    private func bindPush() {
+        let client = self.client
+        let src    = selection.source
+        let dst    = selection.destination
+        gain.onPush = { db in
+            client.setCellGain(source: src, destination: dst,
+                               gain: Gain.linear(fromDecibels: Float(db)))
+        }
     }
 }

@@ -9,6 +9,7 @@
 //   published only when a channel crosses the signal threshold)
 
 import Foundation
+import SwiftUI
 import HydraCore
 
 /// Per-connection peaks, 10 Hz. Observe ONLY in small leaf views.
@@ -50,6 +51,9 @@ final class DaemonClient: ObservableObject {
     @Published private(set) var aes67 = Aes67Payload(devices: [], streams: [])
     @Published private(set) var vst = VSTPayload(available: [])
     @Published private(set) var strips: [StripInfo] = []
+    /// Per-strip in/out peak levels (linear). Populated when the daemon sends
+    /// strip meter data; zero-initialised until then.
+    @Published private(set) var stripMeters: [UUID: StripMeters] = [:]
     /// Event log (latest first) + transient toasts.
     @Published private(set) var events: [HydraEvent] = []
     @Published private(set) var toasts: [HydraEvent] = []
@@ -58,6 +62,7 @@ final class DaemonClient: ObservableObject {
     @Published private(set) var interfaces: [VirtualInterfaceInfo] = []
     /// NDI runtime state + discovered network sources.
     @Published private(set) var ndi = NdiPayload()
+    @Published private(set) var modules = ModulesPayload()
     /// Active disk recordings (keyed by interface).
     @Published private(set) var recordings: [RecordingInfo] = []
 
@@ -179,15 +184,48 @@ final class DaemonClient: ObservableObject {
 
     /// The strip to display/edit for a source channel — falls back to an
     /// unsaved default. ALL channels are mono (stereo lanes are disabled).
-    func effectiveStrip(forNode nodeID: String, channel: Int) -> StripInfo {
-        if let existing = strips.first(where: { $0.nodeID == nodeID && $0.channelIndex == channel && !$0.stereo }) {
+    func effectiveStrip(forNode nodeID: String, channel: Int, stereo: Bool = false) -> StripInfo {
+        let base = stereo ? (channel & ~1) : channel
+        if let existing = strips.first(where: { $0.nodeID == nodeID && $0.channelIndex == base && $0.stereo == stereo }) {
             return existing
         }
-        return StripInfo(nodeID: nodeID, channelIndex: channel, stereo: false)
+        return StripInfo(nodeID: nodeID, channelIndex: base, stereo: stereo)
+    }
+
+    /// Console-style stereo link: true when `evenChannel` and `evenChannel+1`
+    /// are paired as one stereo channel (a stereo strip sits on the even base).
+    func stereoLinked(nodeID: String, evenChannel: Int) -> Bool {
+        strips.contains { $0.nodeID == nodeID && $0.channelIndex == evenChannel && $0.stereo }
+    }
+
+    /// Link / unlink a source channel's console pair (odd+even) as stereo.
+    func setStereoLink(nodeID: String, channel: Int, linked: Bool) {
+        let base = channel & ~1
+        var strip = strips.first { $0.nodeID == nodeID && $0.channelIndex == base }
+            ?? StripInfo(nodeID: nodeID, channelIndex: base, stereo: linked)
+        strip.channelIndex = base
+        strip.stereo = linked
+        setStrip(strip)
     }
 
     func setStrip(_ strip: StripInfo) {
         send(.setStrip(strip))
+    }
+
+    /// Asks the daemon to (re)scan the VST3 folders. Progress arrives as
+    /// successive .vst payloads (scanning / scanProgress / scanLabel).
+    func scanVST() {
+        send(.scanVST)
+    }
+
+    /// Settings → Plugins: show/hide a plugin in the strip's insert picker.
+    func setPluginAvailable(id: String, available: Bool) {
+        send(.setPluginAvailable(.init(id: id, available: available)))
+    }
+
+    /// Settings → Plugins: star/unstar a plugin.
+    func setPluginFavorite(id: String, favorite: Bool) {
+        send(.setPluginFavorite(.init(id: id, favorite: favorite)))
     }
 
     // MARK: - Grid lanes (mono/stereo cells operate channel GROUPS)
@@ -252,10 +290,10 @@ final class DaemonClient: ObservableObject {
     }
 
     func createInterface(name: String, inChannels: Int, outChannels: Int,
-                         ndiTX: Bool = false, aes67TX: Bool = false) {
+                         ndiTX: Bool = false, aes67TX: Bool = false, stereo: Bool = false) {
         send(.createInterface(CreateInterfacePayload(name: name, inChannels: inChannels,
                                                      outChannels: outChannels,
-                                                     ndiTX: ndiTX, aes67TX: aes67TX)))
+                                                     ndiTX: ndiTX, aes67TX: aes67TX, stereo: stereo)))
     }
 
     func setInterfaceNDI(_ id: UUID, enabled: Bool) {
@@ -268,6 +306,10 @@ final class DaemonClient: ObservableObject {
 
     func subscribeNdi(id: String, subscribed: Bool) {
         send(.subscribeNdi(SubscribeNdiPayload(id: id, subscribed: subscribed)))
+    }
+
+    func subscribeModuleSource(id: String, subscribed: Bool) {
+        send(.subscribeModuleSource(SubscribeModuleSourcePayload(id: id, subscribed: subscribed)))
     }
 
     func startRecording(_ interfaceID: UUID) {
@@ -294,8 +336,13 @@ final class DaemonClient: ObservableObject {
     }
 
     /// Pool channels already taken by interfaces (in + out slices).
-    var allocatedPoolChannels: Int {
-        interfaces.reduce(0) { $0 + $1.poolUse }
+    /// The In and Out pools are independent 256-channel slices — report
+    /// them separately (256 transmitters and 256 receivers, Dante-style).
+    var allocatedInChannels: Int {
+        interfaces.reduce(0) { $0 + $1.inChannels }
+    }
+    var allocatedOutChannels: Int {
+        interfaces.reduce(0) { $0 + $1.outChannels }
     }
 
     // MARK: - Transport
@@ -334,6 +381,11 @@ final class DaemonClient: ObservableObject {
             if payload != status { status = payload }
         case .matrix(let payload):
             connections = payload.connections
+        case .setConnection(let conn):
+            // Light gain-only echo from the daemon (no full matrix resend).
+            var local = PatchMatrix(connections: connections)
+            local.upsert(conn)
+            connections = local.connections
         case .levels(let payload):
             meters.peaks = payload.peaks
             signals.update(
@@ -359,6 +411,8 @@ final class DaemonClient: ObservableObject {
             interfaces = payload.interfaces
         case .ndi(let payload):
             ndi = payload
+        case .modules(let payload):
+            modules = payload
         case .recordings(let payload):
             recordings = payload.active
         case .events(let payload):
@@ -367,13 +421,15 @@ final class DaemonClient: ObservableObject {
             events.insert(event, at: 0)
             if events.count > 50 { events.removeLast(events.count - 50) }
             showToast(event)
-        case .getStatus, .getMatrix, .setConnection, .removeConnection,
+        case .getStatus, .getMatrix, .removeConnection, .scanVST,
              .getLabels, .setLabel, .getScenes, .saveScene, .applyScene, .deleteScene,
              .getDevices, .setDeviceUse, .getApps, .setAppCapture,
              .getAes67, .subscribeStream,
-             .getVST, .getStrips, .setStrip, .openPluginEditor, .setConfig,
+             .getVST, .getStrips, .setStrip, .openPluginEditor,
+             .setPluginAvailable, .setPluginFavorite, .setConfig,
              .getInterfaces, .createInterface, .deleteInterface, .setInterfaceNDI, .setInterfaceAES67,
              .getNdi, .subscribeNdi,
+             .getModules, .subscribeModuleSource,
              .getRecordings, .startRecording, .stopRecording:
             break // client → daemon only
         }

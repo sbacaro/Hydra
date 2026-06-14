@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Registered by HydraApp via SMAppService.agent(plistName:). launchd runs
+         hydrad in the user's GUI session (it hosts VST plugin editor windows),
+         starts it at login / on register, and relaunches it if it crashes. -->
+    <key>Label</key>
+    <string>audio.hydra.daemon</string>
+
+    <!-- Path is RELATIVE to the registering app bundle (HydraApp.app). hydrad.app
+         must be embedded at Contents/Library/Helpers/ (see the Copy Files build
+         phase). SMAppService requires the helper to live inside the app bundle. -->
+    <key>BundleProgram</key>
+    <string>Contents/Library/Helpers/hydrad.app/Contents/MacOS/hydrad</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Ties the agent to the app for the System Settings → Login Items UI. -->
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>audio.hydra.app</string>
+    </array>
+
+    <!-- Interactive: GUI session + responsive scheduling (audio + plugin UI). -->
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>

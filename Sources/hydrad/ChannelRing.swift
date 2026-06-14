@@ -119,18 +119,28 @@ final class ChannelRing {
 
         var pos = readPos
         let chans = channels
-        for frame in 0..<frames {
+        // Hand-rolled while-loops (not `for … in 0..<n`): on the realtime audio
+        // thread, Range/IndexingIterator goes through Collection protocol
+        // witnesses + generic-metadata instantiation that an unoptimized (Debug)
+        // build does NOT specialize away — profiling showed ~60% of the audio
+        // thread here. Manual Int indices over the unchecked pointer are fast in
+        // both Debug and Release.
+        var frame = 0
+        while frame < frames {
             let whole = Int64(pos)
             let frac = Float(pos - Double(whole))
             let i0 = Int(whole & mask) * chans
             let i1 = Int((whole &+ 1) & mask) * chans
             let out = destination + frame * chans
-            for ch in 0..<chans {
+            var ch = 0
+            while ch < chans {
                 let a = data[i0 + ch]
                 let b = data[i1 + ch]
                 out[ch] = a + frac * (b - a)
+                ch += 1
             }
             pos += step
+            frame += 1
         }
         readPos = pos
     }
@@ -168,12 +178,16 @@ enum ABLUtil {
             let bufChans = Int(buffer.mNumberChannels)
             guard bufChans > 0, let raw = buffer.mData else { continue }
             let src = raw.assumingMemoryBound(to: Float.self)
-            for frame in 0..<frames {
+            var frame = 0
+            while frame < frames {           // while-loops: see readResampled note
                 let dstBase = frame * totalChannels + channelOffset
                 let srcBase = frame * bufChans
-                for ch in 0..<bufChans {
+                var ch = 0
+                while ch < bufChans {
                     scratch[dstBase + ch] = src[srcBase + ch]
+                    ch += 1
                 }
+                frame += 1
             }
             channelOffset += bufChans
         }
@@ -193,12 +207,16 @@ enum ABLUtil {
             guard bufChans > 0, let raw = buffer.mData else { continue }
             let dst = raw.assumingMemoryBound(to: Float.self)
             let bufFrames = min(frames, Int(buffer.mDataByteSize) / (MemoryLayout<Float>.size * bufChans))
-            for frame in 0..<bufFrames {
+            var frame = 0
+            while frame < bufFrames {        // while-loops: see readResampled note
                 let srcBase = frame * totalChannels + channelOffset
                 let dstBase = frame * bufChans
-                for ch in 0..<bufChans {
+                var ch = 0
+                while ch < bufChans {
                     dst[dstBase + ch] = scratch[srcBase + ch]
+                    ch += 1
                 }
+                frame += 1
             }
             channelOffset += bufChans
         }

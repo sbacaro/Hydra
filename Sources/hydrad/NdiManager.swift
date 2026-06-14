@@ -194,6 +194,9 @@ final class NdiManager {
     var onChange: ((NdiPayload) -> Void)?
 
     private static let persistURL = hydraSupportURL("ndi.json")
+    /// NDI names are "MACHINE (source)" — used to drop our own TX from the
+    /// discovered list (subscribing to yourself is just an echo loop).
+    private let localMachine = ProcessInfo.processInfo.hostName.uppercased()
 
     init(store: MatrixStore) {
         self.store = store
@@ -278,6 +281,14 @@ final class NdiManager {
                 String(cString: raw.bindMemory(to: CChar.self).baseAddress!)
             }
             guard !name.isEmpty else { continue }
+            // Self-discovery filter: hide Hydra's own transmitters — they
+            // already appear under "Hydra on the network" in the app.
+            let machine = name.split(separator: "(").first.map {
+                $0.trimmingCharacters(in: .whitespaces).uppercased()
+            } ?? ""
+            if machine == localMachine || localMachine.hasPrefix(machine + ".") {
+                continue
+            }
             fresh[name] = (name, url)
         }
         guard Set(fresh.keys) != Set(discovered.keys) else { return }

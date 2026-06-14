@@ -19,6 +19,108 @@ import Foundation
 import Network
 import HydraCore
 
+// MARK: - MulticastReceiver: BSD-socket multicast RX
+
+/// Classic socket + IGMP join. NWConnectionGroup reported `.ready` but its
+/// join was never effective on a bridged VM network (packets reached the
+/// host kernel — verified with a raw socket — yet the handler never fired;
+/// diagnosed 2026-06-05 with the Tests/Emulation rig). SAP and RTP RX use
+/// this instead.
+final class MulticastReceiver {
+    private let fd: Int32
+    private let source: DispatchSourceRead
+
+    init?(address: String, port: UInt16, queue: DispatchQueue,
+          handler: @escaping (Data) -> Void) {
+        let fd = socket(AF_INET, SOCK_DGRAM, 0)
+        guard fd >= 0 else { return nil }
+        var yes: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+        setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &yes, socklen_t(MemoryLayout<Int32>.size))
+
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        addr.sin_addr.s_addr = INADDR_ANY
+        let bound = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        // Join on EVERY IPv4 interface (INADDR_ANY joins only the default
+        // multicast route, which may not be where the packets arrive).
+        var joins = 0
+        for ifaceIP in Self.localIPv4Interfaces() + ["0.0.0.0"] {
+            var mreq = ip_mreq()
+            mreq.imr_multiaddr.s_addr = inet_addr(address)
+            mreq.imr_interface.s_addr = inet_addr(ifaceIP)
+            if ifaceIP == "0.0.0.0" { mreq.imr_interface.s_addr = INADDR_ANY }
+            if setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq,
+                          socklen_t(MemoryLayout<ip_mreq>.size)) == 0 {
+                joins += 1
+                log("Multicast \(address):\(port): joined via \(ifaceIP)")
+            } else if errno != EADDRINUSE {   // already joined on that iface
+                log("Multicast \(address):\(port): join via \(ifaceIP) failed (errno \(errno))")
+            }
+        }
+        guard bound == 0, joins > 0,
+              fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK) != -1 else {
+            close(fd)
+            return nil
+        }
+
+        self.fd = fd
+        var loggedFirst = false
+        source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
+        source.setEventHandler {
+            var buffer = [UInt8](repeating: 0, count: 65536)
+            while true {
+                let n = recv(fd, &buffer, buffer.count, 0)
+                guard n > 0 else { break }   // EWOULDBLOCK drains the loop
+                if !loggedFirst {
+                    loggedFirst = true
+                    log("Multicast \(address):\(port): receiving (first datagram \(n) bytes)")
+                }
+                handler(Data(buffer[0..<n]))
+            }
+        }
+        source.setCancelHandler { close(fd) }
+        source.resume()
+    }
+
+    /// IPv4 addresses of all up, non-loopback interfaces.
+    private static func localIPv4Interfaces() -> [String] {
+        var result: [String] = []
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return result }
+        defer { freeifaddrs(list) }
+        var ptr: UnsafeMutablePointer<ifaddrs>? = first
+        while let cur = ptr {
+            defer { ptr = cur.pointee.ifa_next }
+            let flags = Int32(cur.pointee.ifa_flags)
+            guard (flags & IFF_UP) != 0, (flags & IFF_LOOPBACK) == 0,
+                  (flags & IFF_MULTICAST) != 0,
+                  let sa = cur.pointee.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET)
+            else { continue }
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            if getnameinfo(sa, socklen_t(sa.pointee.sa_len), &host, socklen_t(host.count),
+                           nil, 0, NI_NUMERICHOST) == 0 {
+                result.append(String(cString: host))
+            }
+        }
+        return result
+    }
+
+    func stop() {
+        source.cancel()
+    }
+
+    deinit {
+        if !source.isCancelled { source.cancel() }
+    }
+}
+
 // MARK: - Aes67Rx: one subscribed stream feeding the engine
 
 final class Aes67Rx: EngineTap {
@@ -31,7 +133,7 @@ final class Aes67Rx: EngineTap {
     let inStaging: UnsafeMutablePointer<Float>?
     let outStaging: UnsafeMutablePointer<Float>? = nil
 
-    private var group: NWConnectionGroup?
+    private var receiver: MulticastReceiver?
     private let queue = DispatchQueue(label: "hydra.aes67.rx")
     private let scratch: UnsafeMutablePointer<Float>
     private let bytesPerSample: Int
@@ -51,34 +153,17 @@ final class Aes67Rx: EngineTap {
                              producerRate: stream.sampleRate,
                              consumerRate: engineRate)
 
-        guard let port = NWEndpoint.Port(rawValue: stream.port),
-              let multicast = try? NWMulticastGroup(for: [
-                .hostPort(host: NWEndpoint.Host(stream.address), port: port)
-              ]) else {
-            log("AES67 RX \"\(stream.name)\": invalid multicast endpoint \(stream.address):\(stream.port)")
+        receiver = MulticastReceiver(address: stream.address, port: stream.port,
+                                     queue: queue) { [weak self] data in
+            self?.handleRTP(data)
+        }
+        guard receiver != nil else {
+            log("AES67 RX \"\(stream.name)\": could not join \(stream.address):\(stream.port)")
             staging.deallocate()
             scratch.deallocate()
             return nil
         }
-
-        let group = NWConnectionGroup(with: multicast, using: .udp)
-        group.setReceiveHandler(maximumMessageSize: 65536, rejectOversizedMessages: true) { [weak self] _, content, _ in
-            if let content {
-                self?.handleRTP(content)
-            }
-        }
-        group.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-                log("AES67 RX joined \(stream.address):\(stream.port) — \"\(stream.name)\" (\(stream.channels)ch \(stream.encoding) @ \(Int(stream.sampleRate)) Hz)")
-            case .failed(let error):
-                log("AES67 RX \"\(stream.name)\" failed: \(error)")
-            default:
-                break
-            }
-        }
-        self.group = group
-        group.start(queue: queue)
+        log("AES67 RX joined \(stream.address):\(stream.port) — \"\(stream.name)\" (\(stream.channels)ch \(stream.encoding) @ \(Int(stream.sampleRate)) Hz)")
     }
 
     deinit {
@@ -88,8 +173,8 @@ final class Aes67Rx: EngineTap {
     }
 
     func stop() {
-        group?.cancel()
-        group = nil
+        receiver?.stop()
+        receiver = nil
     }
 
     /// Parses an RTP datagram and writes the PCM into the ring (queue thread —
@@ -140,7 +225,7 @@ final class Aes67Manager {
     private let store: MatrixStore
     private let queue = DispatchQueue(label: "hydra.aes67")
     private var browsers: [NWBrowser] = []
-    private var sapListener: NWConnectionGroup?
+    private var sapListener: MulticastReceiver?
     /// Device names seen via mDNS.
     private var presentDevices: Set<String> = []
     /// Stream ID → (stream, last announcement time).
@@ -240,30 +325,15 @@ final class Aes67Manager {
     // MARK: Streams (SAP/SDP)
 
     private func startSAPListener() {
-        guard let port = NWEndpoint.Port(rawValue: Hydra.sapPort),
-              let multicast = try? NWMulticastGroup(for: [
-                .hostPort(host: NWEndpoint.Host(Hydra.sapAddress), port: port)
-              ]) else {
-            log("AES67: could not form SAP multicast group")
-            return
+        sapListener = MulticastReceiver(address: Hydra.sapAddress, port: Hydra.sapPort,
+                                        queue: queue) { [weak self] data in
+            self?.handleSAP(data)
         }
-        let listener = NWConnectionGroup(with: multicast, using: .udp)
-        listener.setReceiveHandler(maximumMessageSize: 65536, rejectOversizedMessages: true) { [weak self] _, content, _ in
-            guard let self, let content else { return }
-            self.handleSAP(content)
+        if sapListener != nil {
+            log("AES67: SAP listener on \(Hydra.sapAddress):\(Hydra.sapPort)")
+        } else {
+            log("AES67: SAP listener failed (socket/join error)")
         }
-        listener.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-                log("AES67: SAP listener on \(Hydra.sapAddress):\(Hydra.sapPort)")
-            case .failed(let error):
-                log("AES67: SAP listener failed: \(error)")
-            default:
-                break
-            }
-        }
-        listener.start(queue: queue)
-        sapListener = listener
     }
 
     /// Runs on `queue` (receive handler queue).
@@ -309,9 +379,25 @@ final class Aes67Manager {
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
-        let devices = presentDevices.sorted().map { name in
+        // `_netaudio-chan` advertises ONE instance PER CHANNEL ("01@device"):
+        // collapse those into a single device entry with a channel count.
+        var channelCounts: [String: Int] = [:]
+        var deviceNames: Set<String> = []
+        for raw in presentDevices {
+            if let at = raw.firstIndex(of: "@"),
+               raw[..<at].allSatisfy(\.isNumber), at != raw.startIndex {
+                let device = String(raw[raw.index(after: at)...])
+                guard !device.isEmpty else { continue }
+                deviceNames.insert(device)
+                channelCounts[device, default: 0] += 1
+            } else {
+                deviceNames.insert(raw)
+            }
+        }
+        let devices = deviceNames.sorted().map { name in
             Aes67Device(name: name,
-                        aes67On: streamList.contains { $0.name.localizedCaseInsensitiveContains(name) })
+                        aes67On: streamList.contains { $0.name.localizedCaseInsensitiveContains(name) },
+                        channels: channelCounts[name] ?? 0)
         }
         return Aes67Payload(devices: devices, streams: streamList)
     }
