@@ -74,8 +74,8 @@ final class PluginManagementTests: XCTestCase {
     // MARK: Message round-trips (app → daemon).
 
     func testSetPluginAvailableRoundTrips() throws {
-        let msg = Message.setPluginAvailable(.init(id: "bundle#2", available: false))
-        let decoded = try JSONDecoder().decode(Message.self, from: JSONEncoder().encode(msg))
+        let msg = WSMessage.setPluginAvailable(.init(id: "bundle#2", available: false))
+        let decoded = try JSONDecoder().decode(WSMessage.self, from: JSONEncoder().encode(msg))
         guard case let .setPluginAvailable(p) = decoded else {
             return XCTFail("decoded to wrong case: \(decoded)")
         }
@@ -83,8 +83,8 @@ final class PluginManagementTests: XCTestCase {
     }
 
     func testSetPluginFavoriteRoundTrips() throws {
-        let msg = Message.setPluginFavorite(.init(id: "bundle#2", favorite: true))
-        let decoded = try JSONDecoder().decode(Message.self, from: JSONEncoder().encode(msg))
+        let msg = WSMessage.setPluginFavorite(.init(id: "bundle#2", favorite: true))
+        let decoded = try JSONDecoder().decode(WSMessage.self, from: JSONEncoder().encode(msg))
         guard case let .setPluginFavorite(p) = decoded else {
             return XCTFail("decoded to wrong case: \(decoded)")
         }
