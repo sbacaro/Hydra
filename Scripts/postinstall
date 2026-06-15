@@ -1,0 +1,65 @@
+#!/bin/bash
+# Hydra Audio Post-install Script — GPL-3.0
+
+set -euo pipefail
+
+INSTALL_DIR="/usr/local/hydra"
+DRIVER_DIR="/Library/Audio/Plug-Ins/HAL"
+DAEMON_PLIST="/Library/LaunchDaemons/com.hydra.audio.daemon.plist"
+PKG_INSTALL_DIR="$2"  # Package install location
+
+log() { printf '\033[1;35m[Hydra Install]\033[0m %s\n' "$*"; }
+fail() { printf '\033[1;31m[Hydra Install] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+
+log "Completing Hydra Audio installation..."
+
+# 1. Install driver from package to system location
+if [[ -d "$PKG_INSTALL_DIR/HydraVirtualSoundcard.driver" ]]; then
+    log "Installing audio driver..."
+    rm -rf "$DRIVER_DIR/HydraVirtualSoundcard.driver"
+    cp -r "$PKG_INSTALL_DIR/HydraVirtualSoundcard.driver" "$DRIVER_DIR/"
+    chmod -R +x "$DRIVER_DIR/HydraVirtualSoundcard.driver"
+    log "Driver installed to $DRIVER_DIR"
+fi
+
+# 2. Create LaunchDaemon plist
+log "Installing daemon launcher..."
+cat > "$DAEMON_PLIST" << 'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.hydra.audio.daemon</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/hydra/hydrad</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/hydra.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/hydra-error.log</string>
+</dict>
+</plist>
+PLIST
+
+chmod 644 "$DAEMON_PLIST"
+log "LaunchDaemon created at $DAEMON_PLIST"
+
+# 3. Restart Core Audio
+log "Restarting Core Audio..."
+killall coreaudiod 2>/dev/null || true
+sleep 2
+
+# 4. Load daemon
+log "Starting Hydra daemon..."
+launchctl load "$DAEMON_PLIST"
+
+log "✓ Installation complete!"
+log "Hydra is now installed at: $INSTALL_DIR"
+log "To launch the app, run: open -a Hydra"
+log "To uninstall, run: sudo rm -rf '$INSTALL_DIR' '$DRIVER_DIR/HydraVirtualSoundcard.driver' '$DAEMON_PLIST' && launchctl unload '$DAEMON_PLIST' 2>/dev/null || true && killall coreaudiod 2>/dev/null || true"
+
+exit 0
