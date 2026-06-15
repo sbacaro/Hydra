@@ -1,7 +1,6 @@
 .DS_Store
 .build/
-*.xcodeproj/xcuserdata/
-*.xcworkspace/xcuserdata/
+**/xcuserdata/
 DerivedData/
 Backplane/work/
 dist/
@@ -14,3 +13,9 @@ build/
 .xcodebuild/
 # project backups
 *.pbxproj.bak
+
+# Release binaries — published to GitHub Releases, never committed
+*.pkg
+*.zip
+*.dmg
+*.app.zip

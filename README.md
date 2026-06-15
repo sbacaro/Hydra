@@ -11,7 +11,7 @@ NDI over the wire, scenes, recording and OSC remote control.
 
 Current version: **0.15.1 beta** (see [`CHANGELOG.md`](CHANGELOG.md)).
 Requires **macOS 26 (Tahoe)**. Full design notes:
-[`PROJETO_HYDRA_FUNDACAO.md`](PROJETO_HYDRA_FUNDACAO.md).
+[`PROJETO_HYDRA_FUNDACAO.md`](docs/PROJETO_HYDRA_FUNDACAO.md).
 
 ## Download & Installation
 
@@ -181,7 +181,7 @@ restarts.
 
 - **Issues:** https://github.com/sbacaro/Hydra/issues
 - **Discussions:** https://github.com/sbacaro/Hydra/discussions
-- **Documentation:** See [`PROJETO_HYDRA_FUNDACAO.md`](PROJETO_HYDRA_FUNDACAO.md) for complete architecture
+- **Documentation:** See [`PROJETO_HYDRA_FUNDACAO.md`](docs/PROJETO_HYDRA_FUNDACAO.md) for complete architecture
 - **Changelog:** [`CHANGELOG.md`](CHANGELOG.md)
 
 ## License
