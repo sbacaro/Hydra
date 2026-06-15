@@ -5,8 +5,9 @@ name: CI
 # rather than trusting a committed .xcodeproj.
 #
 # NOTE: the deployment target is macOS 26.0 (Scripts/generate_xcodeproj.rb:DEPLOY),
-# so the runner must ship the macOS 26 SDK / Xcode 26. `macos-latest` should resolve
-# to it; pin `runs-on: macos-26` if/when a labelled runner exists.
+# so the runner MUST ship the macOS 26 SDK / Xcode 26. `macos-latest` still resolves
+# to macOS 15 (Xcode 16) and can't run the tests, so we pin `macos-26` (GA since
+# 2026-02, ships Xcode 26).
 
 on:
   push:
@@ -20,7 +21,7 @@ concurrency:
 jobs:
   test:
     name: Unit tests + app build
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
