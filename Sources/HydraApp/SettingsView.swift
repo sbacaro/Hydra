@@ -60,6 +60,7 @@ struct SettingsView: View {
 
 private struct GeneralSettingsPane: View {
     @EnvironmentObject private var client: DaemonClient
+    @EnvironmentObject private var updater: Updater
     @State private var loginToggleTick = 0
     @State private var loginError: String?
 
@@ -106,6 +107,22 @@ private struct GeneralSettingsPane: View {
                 Text("Safety")
             } footer: {
                 Text("Blocks patches that would create a feedback loop on the soundcard. Disable only if you know what you're doing.")
+            }
+
+            Section {
+                LabeledContent("Check automatically") {
+                    Toggle("", isOn: $updater.automaticallyChecks)
+                        .labelsHidden()
+                }
+                if let version = updater.availableVersion {
+                    LabeledContent("Available", value: "Hydra \(version)")
+                        .foregroundStyle(.tint)
+                }
+                Button("Check for Updates…") { updater.checkForUpdates() }
+            } header: {
+                Text("Updates")
+            } footer: {
+                Text("Checks GitHub for new releases on launch and every 24 hours. Updates download and install with your confirmation; the audio driver is refreshed automatically when it changes.")
             }
 
             Section {

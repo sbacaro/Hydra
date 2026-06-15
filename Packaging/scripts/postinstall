@@ -1,0 +1,19 @@
+#!/bin/bash
+# Hydra Audio — GPL-3.0
+# Runs as root after the payload is laid down. Make the HAL driver root-owned,
+# clear quarantine, and reload coreaudiod so the "Hydra Virtual Soundcard"
+# device appears immediately.
+
+DRIVER="/Library/Audio/Plug-Ins/HAL/HydraVirtualSoundcard.driver"
+
+if [ -d "$DRIVER" ]; then
+    /usr/sbin/chown -R root:wheel "$DRIVER"
+    /bin/chmod -R 755 "$DRIVER"
+    /usr/bin/xattr -dr com.apple.quarantine "$DRIVER" 2>/dev/null || true
+fi
+
+# Reload coreaudiod so it picks up the new HAL plug-in.
+# (launchctl kickstart of coreaudiod is SIP-blocked; killall + KeepAlive relaunch.)
+/usr/bin/killall coreaudiod 2>/dev/null || true
+
+exit 0

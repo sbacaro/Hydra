@@ -28,5 +28,28 @@
 	<string>NSApplication</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<!-- Menu-bar-first app: start as an accessory (no Dock icon) so launching at
+	     login leaves just the menu bar. A Dock icon + app menu are promoted at
+	     runtime while an ordinary window is open (see AppDelegate). -->
+	<key>LSUIElement</key>
+	<true/>
+	<!-- Sparkle in-app auto-update (see Sources/HydraApp/Updater.swift). The feed
+	     is the appcast attached to the newest GitHub Release; updates are signed
+	     with EdDSA and verified against SUPublicEDKey. -->
+	<key>SUFeedURL</key>
+	<string>https://github.com/sbacaro/Hydra/releases/latest/download/appcast.xml</string>
+	<!-- REPLACE with the public key printed by ThirdParty/Sparkle/bin/generate_keys.
+	     See Packaging/RELEASING.md. With the placeholder, update verification fails
+	     by design (no silent unsigned updates). -->
+	<key>SUPublicEDKey</key>
+	<string>REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<!-- Check on launch and every 24h while running. -->
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<!-- Notify + let the user install (no silent auto-install). -->
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
 </dict>
 </plist>

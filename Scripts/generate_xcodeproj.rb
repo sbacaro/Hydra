@@ -215,6 +215,26 @@ common!(app, 'audio.hydra.app', {
 })
 link_and_embed(app, [core])
 
+# --- Sparkle (in-app auto-update) — prebuilt framework embedded in the app. ---
+# Fetch it NOW, at generation time: an embedded framework must exist before Xcode
+# "plans" the build, so a build-time fetch phase (like the VST3 SDK's) would be too
+# late and the build would fail with "framework not found".
+unless system('bash', File.join(__dir__, 'fetch_sparkle.sh'))
+  abort 'generate_xcodeproj: fetch_sparkle.sh failed — cannot embed Sparkle.'
+end
+sparkle_ref = project.new_file('ThirdParty/Sparkle/Sparkle.framework')
+sparkle_ref.explicit_file_type = 'wrapper.framework'
+app.frameworks_build_phase.add_file_reference(sparkle_ref, true)
+sparkle_embed = app.new_copy_files_build_phase('Embed Sparkle')
+sparkle_embed.symbol_dst_subfolder_spec = :frameworks
+sparkle_embed.dst_path = ''
+sparkle_bf = sparkle_embed.add_file_reference(sparkle_ref, true)
+sparkle_bf.settings = { 'ATTRIBUTES' => %w[CodeSignOnCopy RemoveHeadersOnCopy] }
+# Let the linker find the embedded XCFramework.
+each_config(app) do |_cfg, s, _release|
+  s['FRAMEWORK_SEARCH_PATHS'] = '$(inherited) $(SRCROOT)/ThirdParty/Sparkle'
+end
+
 # App icon + accent: the asset catalog lives at the repo root (Media.xcassets).
 # Add it to the app's resources so actool compiles AppIcon into the bundle —
 # without this the Dock shows a blank icon.

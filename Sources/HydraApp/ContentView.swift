@@ -14,6 +14,8 @@ import HydraCore
 struct ContentView: View {
     @EnvironmentObject private var client: DaemonClient
     @EnvironmentObject private var daemon: DaemonService
+    @EnvironmentObject private var updater: Updater
+    @StateObject private var installer = InstallManager()
     @State private var selection: GridSelection?
     @State private var channelFocus: ChannelFocus?
     @State private var sidebarTab: SidebarTab = .devices
@@ -74,6 +76,13 @@ struct ContentView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             statusBar
         }
+        // In-app update nudge — appears when Sparkle has found a new release.
+        // The actual update flow runs through Sparkle's standard UI.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let version = updater.availableVersion {
+                updateBanner(version: version)
+            }
+        }
         .overlay(alignment: .topTrailing) { toastsOverlay }
         .overlay {
             if showPalette { paletteOverlay }
@@ -94,11 +103,37 @@ struct ContentView: View {
                 .environmentObject(daemon)
         }
         .onAppear {
-            if !hasSeenWelcome { showWelcome = true }
+            if !hasSeenWelcome {
+                showWelcome = true
+            } else {
+                // Onboarded already: after an app update the bundled driver may be
+                // newer than the installed one — reinstall it (prompts admin only
+                // when it actually changed).
+                installer.refreshDriverIfOutdated()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .showWelcomeSheet)) { _ in
             showWelcome = true
         }
+    }
+
+    // MARK: - Update banner
+
+    private func updateBanner(version: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "sparkles")
+                .foregroundStyle(.tint)
+            Text("Hydra \(version) is available.")
+                .font(.callout.weight(.medium))
+            Spacer()
+            Button("Update…") { updater.checkForUpdates() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.regularMaterial)
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     // MARK: - Status indicators

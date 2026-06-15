@@ -19,3 +19,8 @@ build/
 *.zip
 *.dmg
 *.app.zip
+
+# Sparkle auto-update — generated appcast and (NEVER commit) the EdDSA private key
+appcast.xml
+*.private
+sparkle_private_key*

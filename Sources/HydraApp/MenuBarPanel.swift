@@ -13,6 +13,7 @@ import HydraCore
 /// scene recall, save-as, and launch-at-login.
 struct MenuBarPanel: View {
     @EnvironmentObject private var client: DaemonClient
+    @EnvironmentObject private var updater: Updater
     @State private var newSceneName = ""
     @State private var loginTick = 0
 
@@ -39,6 +40,24 @@ struct MenuBarPanel: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+
+            // ── Updates ───────────────────────────────────────────────
+            if let version = updater.availableVersion {
+                Button { updater.checkForUpdates() } label: {
+                    Label("Update to \(version)…", systemImage: "arrow.down.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .help("A new version of Hydra is available")
+            } else {
+                Button { updater.checkForUpdates() } label: {
+                    Label("Check for Updates…", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .font(.caption)
+            }
 
             // ── Recording (per interface) ─────────────────────────────
             if !client.interfaces.isEmpty {
@@ -157,12 +176,16 @@ struct MenuBarPanel: View {
     }
 
     /// Bring the main window forward (and the app, since the menu bar item may be
-    /// clicked while another app is frontmost).
+    /// clicked while another app is frontmost). Hydra launches as a menu-bar
+    /// accessory with the window suppressed, so create it on first open; the Dock
+    /// icon + app menu come up here (and the AppDelegate keeps them in sync).
     private func openMainWindow() {
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        for window in NSApp.windows where window.title == "Hydra Soundcard" {
+        if let window = NSApp.windows.first(where: { $0.title == "Hydra Soundcard" }) {
             window.makeKeyAndOrderFront(nil)
-            return
+        } else {
+            openWindow(id: "main")
         }
     }
 

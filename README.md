@@ -33,6 +33,14 @@ cd Hydra-0.15.1-beta
 sudo bash install.sh
 ```
 
+### Updates
+After the first install, Hydra updates itself. It checks GitHub for new releases
+on launch and every 24 h, notifies you in-app, and installs the new version on
+your confirmation (powered by [Sparkle](https://sparkle-project.org), EdDSA-signed).
+The audio driver is refreshed automatically when it changes. You can also check
+anytime via **Hydra ▸ Check for Updates…**. Maintainers: see
+[`Packaging/RELEASING.md`](Packaging/RELEASING.md).
+
 ## Features
 
 - **256‑channel virtual soundcard** with a Dante Controller–style patch grid — connect any source to any destination by clicking a cell.

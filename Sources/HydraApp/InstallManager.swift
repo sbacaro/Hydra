@@ -119,6 +119,34 @@ final class InstallManager: ObservableObject {
         }
     }
 
+    // MARK: - Driver version refresh (after a Sparkle app update)
+
+    /// Reinstalls the HAL driver when the copy bundled in the (possibly just-
+    /// updated) app is newer than the one in /Library/Audio/Plug-Ins/HAL. No-op
+    /// when the driver isn't installed yet (the first-run Welcome handles that) or
+    /// when versions match — so it only prompts for admin on a real driver update.
+    func refreshDriverIfOutdated() {
+        guard !driver.isBusy,
+              let bundled = locateBundledDriver(),
+              let bundledVersion = Self.bundleVersion(at: bundled) else { return }
+        let installed = URL(fileURLWithPath: "\(halDir)/\(driverBundleName).driver")
+        guard FileManager.default.fileExists(atPath: installed.path),
+              let installedVersion = Self.bundleVersion(at: installed) else { return }
+        // Only act when the bundled driver is strictly newer (numeric compare).
+        guard bundledVersion.compare(installedVersion, options: .numeric) == .orderedDescending else { return }
+        log.info("Driver outdated (installed \(installedVersion, privacy: .public) < bundled \(bundledVersion, privacy: .public)) — reinstalling")
+        installDriver(skipIfPresent: false)
+    }
+
+    /// Reads CFBundleShortVersionString (falling back to CFBundleVersion) from a
+    /// bundle's Info.plist.
+    nonisolated private static func bundleVersion(at bundleURL: URL) -> String? {
+        let plist = bundleURL.appendingPathComponent("Contents/Info.plist")
+        guard let dict = NSDictionary(contentsOf: plist) else { return nil }
+        return (dict["CFBundleShortVersionString"] as? String)
+            ?? (dict["CFBundleVersion"] as? String)
+    }
+
     // MARK: - Driver lookup
 
     /// Finds `HydraVirtualSoundcard.driver` in priority order:

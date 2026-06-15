@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>Hydra</title>
+    <organization>audio.hydra</organization>
+
+    <welcome    file="welcome.html"    mime-type="text/html"/>
+    <license    file="LICENSE"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+
+    <!-- Single-choice install; universal; requires macOS 26 (Tahoe). -->
+    <options customize="never" require-scripts="true" hostArchitectures="arm64,x86_64"/>
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="26.0"/>
+        </allowed-os-versions>
+    </volume-check>
+
+    <choices-outline>
+        <line choice="default">
+            <line choice="audio.hydra.installer"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="audio.hydra.installer" visible="false">
+        <pkg-ref id="audio.hydra.installer"/>
+    </choice>
+
+    <pkg-ref id="audio.hydra.installer" onConclusion="none">Hydra-component.pkg</pkg-ref>
+</installer-gui-script>
