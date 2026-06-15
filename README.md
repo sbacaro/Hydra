@@ -9,9 +9,29 @@ NDI over the wire, scenes, recording and OSC remote control.
 [BlackHole](https://github.com/ExistentialAudio/BlackHole) driver (see
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)).
 
-Current version: **0.19.1 beta** (see [`CHANGELOG.md`](CHANGELOG.md)).
+Current version: **0.15.1 beta** (see [`CHANGELOG.md`](CHANGELOG.md)).
 Requires **macOS 26 (Tahoe)**. Full design notes:
 [`PROJETO_HYDRA_FUNDACAO.md`](PROJETO_HYDRA_FUNDACAO.md).
+
+## Download & Installation
+
+### Quick Install (Recommended)
+Download the installer from the latest [GitHub release](https://github.com/sbacaro/Hydra/releases/latest):
+
+```bash
+# Download and install
+curl -L https://github.com/sbacaro/Hydra/releases/download/v0.15.1-beta/Hydra-0.15.1.pkg -o Hydra.pkg
+open Hydra.pkg
+```
+
+### Manual Installation
+Download the [ZIP archive](https://github.com/sbacaro/Hydra/releases/download/v0.15.1-beta/Hydra-0.15.1-beta.zip) and run:
+
+```bash
+unzip Hydra-0.15.1-beta.zip
+cd Hydra-0.15.1-beta
+sudo bash install.sh
+```
 
 ## Features
 
@@ -31,12 +51,17 @@ Requires **macOS 26 (Tahoe)**. Full design notes:
 Hydra ships as a single app that contains everything it needs:
 
 - **`Hydra.app`** — the SwiftUI UI (client only; no audio work happens here).
-- **`hydrad`** — the background daemon (audio engine, device/app/network managers, local WebSocket server on `127.0.0.1:59731`). It's embedded at `Contents/Library/Helpers/hydrad.app` and registered as a per‑user LaunchAgent via `SMAppService` (`Contents/Library/LaunchAgents/audio.hydra.daemon.plist`). The app starts it on launch and stops it on quit.
-- **`HydraVirtualSoundcard.driver`** — the backplane HAL plugin, embedded in the app's Resources and installed to `/Library/Audio/Plug‑Ins/HAL` by the in‑app Welcome flow (one admin prompt).
+- **`hydrad`** — the background daemon (audio engine, device/app/network managers, local WebSocket server on `127.0.0.1:59731`). It's embedded at `/usr/local/hydra/hydrad` and registered as a system LaunchDaemon (`/Library/LaunchDaemons/com.hydra.audio.daemon.plist`). The app starts it on launch and stops it on quit.
+- **`HydraVirtualSoundcard.driver`** — the backplane HAL plugin, installed to `/Library/Audio/Plug‑Ins/HAL` by the installer (admin privileges required).
 
-On first run, the **Welcome** flow walks the user through it and installs the
-soundcard driver; it also opens Vizrt's official NDI redistributable installer
-(the NDI runtime is loaded dynamically at run time, never shipped).
+On first run, Hydra requests the necessary permissions (audio capture, microphone access) and automatically starts the daemon.
+
+## System Requirements
+
+- **macOS 26.0 (Tahoe)** or later
+- Apple Silicon (arm64) or Intel (x86_64)
+- Administrator privileges for driver installation
+- **SIP can remain enabled** (driver loads as AudioServerPlugIn)
 
 ## Build & run
 
@@ -118,6 +143,47 @@ restarts.
 > creates a feedback loop. Feedback protection (Settings → General) blocks these
 > by default.
 
+## Testing Phases
+
+### Phase 2: Basic Grid Routing
+1. Set an app's output to "Hydra Virtual Soundcard"
+2. Play audio
+3. In Hydra, patch In 1 → Out 3, In 2 → Out 4
+4. Verify audio appears at outputs 3–4
+
+### Phase 2b: Physical Devices + Drift Correction
+1. Enable a physical device in Devices tab
+2. Patch Hydra inputs to the device
+3. Play for several minutes — no clicks or drift
+
+### Phase 3: Per-App Capture
+1. Open Apps tab
+2. Find a playing app (green speaker icon)
+3. Toggle capture (allows audio-capture permission on first use)
+4. App appears as two source rows (L/R)
+5. Patch to speaker or monitor
+
+### Phase 4: AES67 Reception (requires Dante hardware)
+1. Enable bridged networking on VM
+2. Dante device in AES67 mode appears in Network tab
+3. Multicast flow appears under Streams
+4. Toggle subscribe → audio flows through grid
+
+### Phase 6: VST3 Channel Strips
+1. Install a VST3 plugin to `/Library/Audio/Plug-Ins/VST3`
+2. Restart daemon
+3. Select a source channel
+4. Click Insert → search plugin → select
+5. Plugin editor opens; tweak parameters live
+6. Audio processes in real-time
+
+## Support & Feedback
+
+- **Issues:** https://github.com/sbacaro/Hydra/issues
+- **Discussions:** https://github.com/sbacaro/Hydra/discussions
+- **Documentation:** See [`PROJETO_HYDRA_FUNDACAO.md`](PROJETO_HYDRA_FUNDACAO.md) for complete architecture
+- **Changelog:** [`CHANGELOG.md`](CHANGELOG.md)
+
 ## License
 
 GPL‑3.0 — see [`LICENSE`](LICENSE). Third‑party components and their licenses are
@@ -125,3 +191,7 @@ listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The Steinberg VST3
 SDK is fetched by `Scripts/fetch_vst3sdk.sh` (GPLv3 option) and the NDI runtime
 is loaded at run time from the user's own install — neither is committed to this
 repository.
+
+---
+
+**Latest Release:** [Hydra 0.15.1 beta](https://github.com/sbacaro/Hydra/releases/tag/v0.15.1-beta) · Released June 14, 2026
