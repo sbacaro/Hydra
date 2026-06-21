@@ -1,18 +1,24 @@
 name: CI
 
-# Build + unit-test gate. Runs on every push and PR. The project is GENERATED
-# from Scripts/generate_xcodeproj.rb (xcodeproj gem), so CI regenerates it fresh
-# rather than trusting a committed .xcodeproj.
+# Build + unit-test gate. Runs on every push and PR. The Xcode project is
+# GENERATED from project.yml (XcodeGen), so CI regenerates it fresh rather than
+# trusting a committed .xcodeproj. (Scripts/generate_xcodeproj.rb is kept as a
+# fallback generator.)
 #
-# NOTE: the deployment target is macOS 26.0 (Scripts/generate_xcodeproj.rb:DEPLOY),
-# so the runner MUST ship the macOS 26 SDK / Xcode 26. `macos-latest` still resolves
-# to macOS 15 (Xcode 16) and can't run the tests, so we pin `macos-26` (GA since
-# 2026-02, ships Xcode 26).
+# NOTE: the deployment target is macOS 26.0 (project.yml), so the runner MUST
+# ship the macOS 26 SDK / Xcode 26. `macos-latest` still resolves to macOS 15
+# (Xcode 16) and can't run the tests, so we pin `macos-26` (GA since 2026-02,
+# ships Xcode 26).
 
 on:
   push:
     branches: [ main, master ]
   pull_request:
+
+# Least privilege: CI only reads the repo. It never needs write scopes (the
+# release workflow has its own narrowly-scoped contents:write).
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -23,18 +29,18 @@ jobs:
     name: Unit tests + app build
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Toolchain
         run: |
           sw_vers
           xcodebuild -version
 
-      - name: Install xcodeproj gem
-        run: gem install xcodeproj --no-document
+      - name: Install XcodeGen
+        run: brew install xcodegen
 
       - name: Generate Xcode project
-        run: ruby Scripts/generate_xcodeproj.rb
+        run: xcodegen generate
 
       # The HydraCore scheme bundles the HydraCoreTests target — this is the gate.
       - name: HydraCore unit tests
@@ -46,6 +52,23 @@ jobs:
             -destination 'platform=macOS' \
             -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO
+
+      # Real-time ring tests (ChannelRing SPSC + polyphase resampler), compiled
+      # directly into the HydraRTTests bundle.
+      - name: ChannelRing RT tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Hydra.xcodeproj \
+            -scheme HydraRTTests \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO
+
+      # SwiftPM parity: `swift test` builds HydraCore + HydraCoreTests in Swift 6
+      # language mode (see Package.swift), so the pure code is strict-concurrency
+      # checked the same way here as in the Xcode build.
+      - name: SwiftPM tests (parity)
+        run: swift test
 
       # Smoke-build the app (UI) without signing, so a broken build is caught
       # even when no test covers the changed code.
@@ -72,8 +95,89 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-results
           path: TestResults.xcresult
           if-no-files-found: ignore
+
+  sanitizers:
+    name: Sanitizers (ASan / TSan)
+    runs-on: macos-26
+    # Runs the suite under runtime sanitizers. ASan and TSan are mutually
+    # exclusive, so they're separate steps. HydraRTTests drives the real-time
+    # ring from two threads — TSan validates the SPSC atomic ordering and ASan
+    # the polyphase resampler's circular indexing.
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      # Address + Undefined-Behavior sanitizers: catch buffer overruns, bad
+      # pointer math (e.g. the ring's circular indexing) and UB.
+      - name: Unit tests — AddressSanitizer + UBSan
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Hydra.xcodeproj \
+            -scheme HydraCore \
+            -destination 'platform=macOS' \
+            -enableAddressSanitizer YES \
+            -enableUndefinedBehaviorSanitizer YES \
+            CODE_SIGNING_ALLOWED=NO
+
+      # Thread sanitizer on the pure suite.
+      - name: Unit tests — ThreadSanitizer
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Hydra.xcodeproj \
+            -scheme HydraCore \
+            -destination 'platform=macOS' \
+            -enableThreadSanitizer YES \
+            CODE_SIGNING_ALLOWED=NO
+
+      # The real payoff: the concurrent ring test under TSan (atomic ordering
+      # between producer and consumer) and ASan (circular buffer indexing).
+      - name: RT ring — ThreadSanitizer
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Hydra.xcodeproj \
+            -scheme HydraRTTests \
+            -destination 'platform=macOS' \
+            -enableThreadSanitizer YES \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: RT ring — AddressSanitizer + UBSan
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Hydra.xcodeproj \
+            -scheme HydraRTTests \
+            -destination 'platform=macOS' \
+            -enableAddressSanitizer YES \
+            -enableUndefinedBehaviorSanitizer YES \
+            CODE_SIGNING_ALLOWED=NO
+
+      # Compile the daemon with ASan instrumentation, so a build break under
+      # sanitizer settings (RT code, unsafe pointers) is caught even before a
+      # runtime test exercises it.
+      - name: Build hydrad — AddressSanitizer
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Hydra.xcodeproj \
+            -scheme hydrad \
+            -destination 'platform=macOS' \
+            -enableAddressSanitizer YES \
+            CODE_SIGNING_ALLOWED=NO

@@ -3,7 +3,9 @@
 #
 # Two modes (you're asked at start, or pass one as an argument):
 #   push   — stage, commit, and push to the current branch.
-#   full   — push, then (re)tag, build the .pkg, and publish a GitHub release.
+#   full   — push, then (re)tag. GitHub Actions (release.yml) builds the .pkg,
+#            computes its SHA-256, and publishes both to the GitHub Release —
+#            which is what the in-app updater downloads and verifies.
 #
 # Usage:
 #   bash release.sh           # interactive: asks which mode
@@ -27,10 +29,10 @@ else
 fi
 
 # ── Configuration ──────────────────────────────────────────────────────────
-VERSION="0.20.0"
+VERSION="0.21.0"
 TAG="v$VERSION"
 TITLE="Hydra $VERSION beta"
-COMMIT_MSG="Release $TAG: Modernization, Concurrency, and UI Polishing"
+COMMIT_MSG="Release $TAG: Self-contained updater, XcodeGen migration, HydraRT, hardening"
 
 # ── Styling ────────────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -84,7 +86,7 @@ if [ -z "$MODE" ]; then
         printf '\n%s  Hydra Release %s%s\n\n' "$BOLD$CYAN" "$VERSION" "$RESET"
         printf '  What would you like to do?\n\n'
         printf '    %s1%s  Push only   %s— commit & push to the current branch%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
-        printf '    %s2%s  Full release %s— push, tag, build .pkg, publish on GitHub%s\n\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+        printf '    %s2%s  Full release %s— push & tag; CI builds the .pkg and publishes%s\n\n' "$BOLD" "$RESET" "$DIM" "$RESET"
         printf '  Choose %s[1/2]%s: ' "$BOLD" "$RESET"
         read -r choice
         case "$choice" in
@@ -103,18 +105,9 @@ else
 fi
 
 # ── Preflight ──────────────────────────────────────────────────────────────
+# A full release no longer needs the gh CLI locally — GitHub Actions builds and
+# publishes the assets when the tag is pushed.
 command -v git >/dev/null || fail "git is required but not installed."
-
-if [ "$MODE" = "full" ]; then
-    if command -v gh >/dev/null; then
-        GH_BIN="gh"
-    elif [ -f "/opt/homebrew/bin/gh" ]; then
-        GH_BIN="/opt/homebrew/bin/gh"
-    else
-        fail "gh (GitHub CLI) is required for a full release. Install: brew install gh"
-    fi
-    $GH_BIN auth status >/dev/null 2>&1 || fail "Authenticate first: $GH_BIN auth login"
-fi
 
 CURRENT_BRANCH="$(git branch --show-current)"
 header "$MODE"
@@ -133,28 +126,17 @@ if [ "$MODE" = "push" ]; then
     exit 0
 fi
 
-# ── Tagging (full only) ────────────────────────────────────────────────────
+# ── Tag & let CI publish (full only) ───────────────────────────────────────
 git tag -d "$TAG" >/dev/null 2>&1 || true
 git push origin :refs/tags/"$TAG" >/dev/null 2>&1 || true
 run "Tag $TAG" git tag -a "$TAG" -m "$TITLE"
-run "Push tag $TAG" git push origin "$TAG"
+run "Push tag $TAG (triggers CI build + publish)" git push origin "$TAG"
 
-# ── Package (full only) ────────────────────────────────────────────────────
-run "Build installer (.pkg)" bash Packaging/build_pkg.sh
-PKG_PATH="dist/Hydra-$VERSION.pkg"
-[ -f "$PKG_PATH" ] || fail "Package build succeeded but $PKG_PATH is missing."
+# The Release workflow (.github/workflows/release.yml) now builds the .pkg,
+# computes its SHA-256, and publishes both to the GitHub Release.
+REMOTE_URL="$(git remote get-url origin 2>/dev/null || true)"
+ACTIONS_URL="$(printf '%s' "$REMOTE_URL" | sed -E 's#git@github.com:#https://github.com/#; s#\.git$##')/actions"
 
-# ── Release notes (from CHANGELOG) ─────────────────────────────────────────
-NOTES_FILE="build/release_notes.md"
-mkdir -p build
-awk '/^## \[0.20.0/ {flag=1; next} /^## \[/ {flag=0} flag' CHANGELOG.md > "$NOTES_FILE"
-[ -s "$NOTES_FILE" ] || echo "Release $TITLE." > "$NOTES_FILE"
-
-# ── Publish (full only) ────────────────────────────────────────────────────
-run "Publish GitHub release" \
-    "$GH_BIN" release create "$TAG" --title "$TITLE" --notes-file "$NOTES_FILE" "$PKG_PATH"
-
-URL="$($GH_BIN release view "$TAG" --json url -q .url 2>/dev/null || true)"
-printf '\n%s  ✓ Released %s%s\n' "$GREEN$BOLD" "$TAG" "$RESET"
-[ -n "$URL" ] && printf '  %s%s%s\n' "$DIM" "$URL" "$RESET"
-printf '\n'
+printf '\n%s  ✓ Tag %s pushed.%s\n' "$GREEN$BOLD" "$TAG" "$RESET"
+printf '  %sGitHub Actions is building & publishing the release:%s\n' "$DIM" "$RESET"
+printf '  %s%s%s\n\n' "$DIM" "$ACTIONS_URL" "$RESET"

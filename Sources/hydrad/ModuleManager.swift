@@ -11,6 +11,7 @@
 import Foundation
 import Synchronization
 import HydraCore
+import HydraRT
 import HydraModuleABI
 
 // MARK: - C trampolines (must be free functions for @convention(c))

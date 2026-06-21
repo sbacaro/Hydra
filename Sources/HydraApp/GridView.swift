@@ -121,10 +121,15 @@ struct GridView: View {
     @State private var confirmClear = false
     @StateObject private var scroll = ScrollState()
 
-    private let cell:        CGFloat = 30
+    // Dynamic Type: the grid's metrics scale with the user's text-size setting
+    // (clamped on the grid container in `body`), so dense labels stay legible and
+    // the cells grow with them. `gap` and `axisMargin` are render constants, not
+    // text, so they stay fixed.
+    @ScaledMetric(relativeTo: .callout) private var cell:          CGFloat = 30
+    @ScaledMetric(relativeTo: .callout) private var groupSize:     CGFloat = 30
+    @ScaledMetric(relativeTo: .callout) private var labelWidth:    CGFloat = 150
+    @ScaledMetric(relativeTo: .callout) private var labelFontSize: CGFloat = 12
     private let gap:         CGFloat = 2
-    private let groupSize:   CGFloat = 30
-    private let labelWidth:  CGFloat = 150
     private var headerHeight: CGFloat { labelWidth }
     /// Extra px rendered beyond the viewport so labels don't pop in on scroll.
     private let axisMargin:  CGFloat = 120
@@ -341,13 +346,15 @@ struct GridView: View {
                     frozenGrid(rowItems: rowItems, colItems: colItems,
                                rows: rows, cols: cols, connected: connected)
                         .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.Grid.hairline, lineWidth: 0.5))
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.Grid.hairline, lineWidth: 0.5))
                 }
                 .padding(16)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Dense matrix: honor Dynamic Type but cap growth so it stays usable.
+        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
     }
 
     // MARK: - Control bar
@@ -493,8 +500,8 @@ struct GridView: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 14).fill(Theme.Grid.panel))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.Grid.panel))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func columnHeaders(_ items: [AxisItem], layout: AxisLayout) -> some View {
@@ -529,7 +536,7 @@ struct GridView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.Grid.textTertiary)
                     Text(label)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: labelFontSize, weight: .semibold))
                         .monospacedDigit()
                         .foregroundStyle(expanded && groupChannels
                                          ? Theme.accent : Theme.Grid.textPrimary)
@@ -545,7 +552,7 @@ struct GridView: View {
                     }
                 }
                 .frame(width: groupSize, height: headerHeight)
-                .background(RoundedRectangle(cornerRadius: 5).fill(Theme.Grid.groupHeader))
+                .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Theme.Grid.groupHeader))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -558,7 +565,7 @@ struct GridView: View {
                 || (channelFocus?.scope == .input && channelFocus?.entry.id == entry.id)
             VStack(spacing: 2) {
                 Text(entry.shortLabel)
-                    .font(.system(size: 12, weight: active ? .bold : .medium))
+                    .font(.system(size: labelFontSize, weight: active ? .bold : .medium))
                     .monospacedDigit()
                     .foregroundStyle(active ? Theme.accent : Theme.Grid.textTertiary)
                     .lineLimit(1)
@@ -608,7 +615,7 @@ struct GridView: View {
                         .foregroundStyle(Theme.Grid.textTertiary)
                     Spacer(minLength: 0)
                     Text(label)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: labelFontSize, weight: .semibold))
                         .monospacedDigit()
                         .foregroundStyle(expanded && groupChannels
                                          ? Theme.accent : Theme.Grid.textPrimary)
@@ -622,7 +629,7 @@ struct GridView: View {
                 }
                 .padding(.horizontal, 8)
                 .frame(width: labelWidth, height: groupSize)
-                .background(RoundedRectangle(cornerRadius: 5).fill(Theme.Grid.groupHeader))
+                .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Theme.Grid.groupHeader))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -635,7 +642,7 @@ struct GridView: View {
                 || (channelFocus?.scope == .output && channelFocus?.entry.id == entry.id)
             HStack(spacing: 4) {
                 Text(entry.label)
-                    .font(.system(size: 12, weight: active ? .bold : .medium))
+                    .font(.system(size: labelFontSize, weight: active ? .bold : .medium))
                     .monospacedDigit()
                     .foregroundStyle(active ? Theme.Grid.textPrimary : Theme.Grid.textTertiary)
                     .lineLimit(1)
@@ -951,7 +958,7 @@ private struct CellField: View {
                 guard case .channel(let source) = colSlot.item else { continue }
                 let rect = CGRect(x: colSlot.origin, y: rowSlot.origin,
                                   width: colSlot.size, height: rowSlot.size)
-                let path = Path(roundedRect: rect, cornerRadius: 5)
+                let path = Path(roundedRect: rect, cornerRadius: 5, style: .continuous)
 
                 let key        = "\(source.nodeID):\(source.channel)>\(destination.nodeID):\(destination.channel)"
                 let isConnected = connected.contains(key)
@@ -977,11 +984,11 @@ private struct CellField: View {
                     let size: CGFloat = isSelected ? 14 : 12
                     let dot = CGRect(x: rect.midX - size / 2, y: rect.midY - size / 2,
                                      width: size, height: size)
-                    context.fill(Path(roundedRect: dot, cornerRadius: 3),
+                    context.fill(Path(roundedRect: dot, cornerRadius: 3, style: .continuous),
                                  with: .color(Theme.Grid.patchDot))
                 } else if isHovered {
                     let ghost = CGRect(x: rect.midX - 4.5, y: rect.midY - 4.5, width: 9, height: 9)
-                    context.stroke(Path(roundedRect: ghost, cornerRadius: 2),
+                    context.stroke(Path(roundedRect: ghost, cornerRadius: 2, style: .continuous),
                                    with: .color(Theme.Grid.patchGhost), lineWidth: 1)
                 }
             }

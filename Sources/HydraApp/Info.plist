@@ -33,22 +33,8 @@
 	     runtime while an ordinary window is open (see AppDelegate). -->
 	<key>LSUIElement</key>
 	<true/>
-	<!-- Sparkle in-app auto-update (see Sources/HydraApp/Updater.swift). The feed
-	     is the appcast attached to the newest GitHub Release; updates are signed
-	     with EdDSA and verified against SUPublicEDKey. -->
-	<key>SUFeedURL</key>
-	<string>https://github.com/sbacaro/Hydra/releases/latest/download/appcast.xml</string>
-	<!-- EdDSA public key matching sparkle_private_key.txt (used by CI to sign
-	     releases). Derived from that private key; updates are verified against it. -->
-	<key>SUPublicEDKey</key>
-	<string>17zKsHRjwKc9aIJfpS6cI07GM8YTQnafmPMr7agNXoI=</string>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
-	<!-- Check on launch and every 24h while running. -->
-	<key>SUScheduledCheckInterval</key>
-	<integer>86400</integer>
-	<!-- Notify + let the user install (no silent auto-install). -->
-	<key>SUAutomaticallyUpdate</key>
-	<false/>
+	<!-- In-app auto-update is handled by Sources/HydraApp/Updater.swift: it
+	     polls the latest GitHub Release, verifies the .pkg against its published
+	     SHA-256, and installs it via an admin prompt. No third-party framework. -->
 </dict>
 </plist>

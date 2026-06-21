@@ -26,7 +26,7 @@ If applicable, add screenshots to help explain your problem.
 **Environment (please complete the following information):**
 - macOS Version: [e.g. macOS 26.5]
 - Xcode Version: [e.g. 26.5]
-- Hydra Version: [e.g. 0.20.0]
+- Hydra Version: [e.g. 0.21.0]
 
 **Additional Context**
 Add any other context about the problem here (e.g., coreaudiod logs, WebSocket connection logs).

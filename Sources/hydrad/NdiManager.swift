@@ -18,6 +18,7 @@
 import Foundation
 import Synchronization
 import HydraCore
+import HydraRT
 import HydraNDIShim
 
 // MARK: - NdiRx: one subscribed source

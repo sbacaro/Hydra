@@ -21,6 +21,7 @@ import Accelerate
 import AppKit
 import Synchronization
 import HydraCore
+import HydraRT
 
 // MARK: - AppTap: one captured app (possibly many processes)
 

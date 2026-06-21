@@ -33,11 +33,8 @@ struct PluginPickerSheet: View {
             
             VStack(spacing: 12) {
                 HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                    TextField("Search…", text: $searchText)
-                        .textFieldStyle(.roundedBorder)
-                    
+                    SearchField(text: $searchText, prompt: "Search")
+
                     Toggle(isOn: $showOnlyFavorites) {
                         Image(systemName: "star.fill")
                             .font(.system(size: 11))

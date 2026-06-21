@@ -1,0 +1,327 @@
+# Hydra Audio — GPL-3.0
+# XcodeGen project definition. Declarative replacement for Scripts/generate_xcodeproj.rb.
+#
+#   brew install xcodegen      # once
+#   xcodegen generate          # writes Hydra.xcodeproj
+#
+# ── MIGRATION STATUS ────────────────────────────────────────────────────────
+# This was translated 1:1 from the (working, validated) Ruby generator. It has
+# NOT yet been built on a Mac. Validate with `xcodegen generate` + a build, and
+# expect to iterate. The Ruby generator is kept as a working fallback until this
+# is proven. KNOWN GAPS vs the Ruby generator (flagged inline below):
+#   • Code-sign identity: the Ruby gen auto-detected a "Hydra Dev" self-signed
+#     cert (stable signature for SMAppService's LWCR). YAML is static, so this
+#     uses ad-hoc ("-"). Set CODE_SIGN_IDENTITY to "Hydra Dev" locally (or via an
+#     .xcconfig) to restore the stable-signature behaviour for the daemon.
+#   • Synchronized folder groups → XcodeGen uses glob `sources` instead.
+#   • The VST3 SDK fetch is a preBuildScript on HydraVST (the Ruby gen used a
+#     separate aggregate target to avoid a Copy-Headers ordering warning).
+
+name: Hydra
+
+options:
+  bundleIdPrefix: audio.hydra
+  developmentLanguage: en
+  deploymentTarget:
+    macOS: "26.0"
+  groupSortPosition: top
+  generateEmptyDirectories: true
+
+# Project-wide build settings (mirror common! in the Ruby generator).
+settings:
+  base:
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    ENABLE_MODULE_VERIFIER: NO
+    SWIFT_VERSION: "6.0"
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    SWIFT_STRICT_CONCURRENCY: complete
+    MARKETING_VERSION: "0.21.0"
+    CURRENT_PROJECT_VERSION: "0.21.0"
+    ALWAYS_SEARCH_USER_PATHS: NO
+    CLANG_ENABLE_OBJC_WEAK: YES
+    GENERATE_INFOPLIST_FILE: YES
+    # GAP: ad-hoc signing. Set "Hydra Dev" for stable SMAppService signatures.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+  configs:
+    Debug:
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+      ONLY_ACTIVE_ARCH: YES
+    Release:
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+      ONLY_ACTIVE_ARCH: NO
+      ARCHS: arm64 x86_64
+
+targets:
+
+  # ── Libraries ─────────────────────────────────────────────────────────────
+  HydraCore:
+    type: framework
+    platform: macOS
+    sources: [Sources/HydraCore]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.core
+        DEFINES_MODULE: YES
+
+  HydraRT:
+    type: framework
+    platform: macOS
+    sources: [Sources/HydraRT]
+    dependencies:
+      - target: HydraCore
+        embed: false
+      - sdk: CoreAudio.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.rt
+        DEFINES_MODULE: YES
+
+  HydraNDIShim:
+    type: framework
+    platform: macOS
+    sources:
+      - Sources/HydraNDIShim
+      - path: Sources/HydraNDIShim/include/hydra_ndi.h
+        headerVisibility: public
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.ndishim
+        DEFINES_MODULE: YES
+        CLANG_ENABLE_MODULES: YES
+        MODULEMAP_FILE: Sources/HydraNDIShim/module.modulemap
+
+  HydraModuleABI:
+    type: framework
+    platform: macOS
+    sources:
+      - Sources/HydraModuleABI
+      - path: Sources/HydraModuleABI/include/hydra_module.h
+        headerVisibility: public
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.moduleabi
+        DEFINES_MODULE: YES
+        CLANG_ENABLE_MODULES: YES
+        MODULEMAP_FILE: Sources/HydraModuleABI/module.modulemap
+
+  HydraPluginHostABI:
+    type: framework
+    platform: macOS
+    sources:
+      - Sources/HydraPluginHostABI
+      - path: Sources/HydraPluginHostABI/include/hydra_plugin_shm.h
+        headerVisibility: public
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.pluginhostabi
+        DEFINES_MODULE: YES
+        CLANG_ENABLE_MODULES: YES
+        MODULEMAP_FILE: Sources/HydraPluginHostABI/module.modulemap
+
+  HydraVST:
+    type: framework
+    platform: macOS
+    sources:
+      - Sources/HydraVST
+      - path: Sources/HydraVST/include/hydra_vst.h
+        headerVisibility: public
+    dependencies:
+      - sdk: Cocoa.framework
+      - sdk: CoreFoundation.framework
+      - sdk: Foundation.framework
+    preBuildScripts:
+      - name: Fetch VST3 SDK
+        script: '"$SRCROOT/Scripts/fetch_vst3sdk.sh"'
+        inputFiles: [$(SRCROOT)/Scripts/fetch_vst3sdk.sh]
+        outputFiles: [$(SRCROOT)/ThirdParty/vst3sdk/pluginterfaces/base/ipluginbase.h]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.vst
+        DEFINES_MODULE: YES
+        CLANG_ENABLE_MODULES: YES
+        MODULEMAP_FILE: Sources/HydraVST/module.modulemap
+        CLANG_CXX_LANGUAGE_STANDARD: "c++2b"
+        CLANG_CXX_LIBRARY: "libc++"
+        GCC_PREPROCESSOR_DEFINITIONS: "$(inherited) RELEASE=1"
+        HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Sources/HydraVST $(SRCROOT)/ThirdParty/vst3sdk"
+        CLANG_WARN_DOCUMENTATION_COMMENTS: NO
+        GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS: NO
+
+  # ── Executables ───────────────────────────────────────────────────────────
+  hydrad:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/hydrad
+        excludes: [Info.plist]
+    dependencies:
+      - target: HydraCore
+      - target: HydraRT
+      - target: HydraVST
+      - target: HydraNDIShim
+      - target: HydraModuleABI
+      - target: HydraPluginHostABI
+      - target: hydra-plugin-host    # built first; embedded into the app, not here
+        embed: false
+        link: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.daemon
+        PRODUCT_NAME: hydrad
+        INFOPLIST_FILE: Sources/hydrad/Info.plist
+        INFOPLIST_KEY_LSUIElement: YES
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: Sources/hydrad/hydrad.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks"
+
+  hydra-plugin-host:
+    type: application
+    platform: macOS
+    sources: [Sources/hydra-plugin-host]
+    dependencies:
+      - target: HydraVST
+      - target: HydraPluginHostABI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.pluginhost
+        PRODUCT_NAME: hydra-plugin-host
+        INFOPLIST_KEY_LSUIElement: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks"
+
+  HydraApp:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/HydraApp
+        excludes:
+          - Info.plist
+          - LaunchAgents/audio.hydra.daemon.plist
+      - Media.xcassets
+    dependencies:
+      - target: HydraCore
+      # Driver bundle → Contents/Resources (code-signed on copy).
+      - target: HydraVirtualSoundcard
+        embed: false
+        copy:
+          destination: resources
+          codeSign: true
+      # Daemon + plugin host → Contents/Library/Helpers (SMAppService layout).
+      - target: hydrad
+        embed: false
+        copy:
+          destination: wrapper
+          subpath: Contents/Library/Helpers
+          codeSign: true
+      - target: hydra-plugin-host
+        embed: false
+        copy:
+          destination: wrapper
+          subpath: Contents/Library/Helpers
+          codeSign: true
+    # The LaunchAgent plist → Contents/Library/LaunchAgents. XcodeGen has no
+    # first-class file-copy-to-subpath, so a post-build script places it.
+    postBuildScripts:
+      - name: Embed LaunchAgent
+        script: |
+          set -e
+          DEST="$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/Library/LaunchAgents"
+          mkdir -p "$DEST"
+          cp "$SRCROOT/Sources/HydraApp/LaunchAgents/audio.hydra.daemon.plist" "$DEST/"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.app
+        PRODUCT_NAME: Hydra
+        INFOPLIST_FILE: Sources/HydraApp/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: Sources/HydraApp/HydraApp.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_EMIT_LOC_STRINGS: YES
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+
+  # ── Backplane driver (.driver — AudioServerPlugIn bundle) ──────────────────
+  HydraVirtualSoundcard:
+    type: bundle
+    platform: macOS
+    deploymentTarget: "11.0"
+    sources:
+      - path: Backplane/Driver
+        excludes: [Hydra.plist]
+    dependencies:
+      - sdk: CoreAudio.framework
+      - sdk: CoreFoundation.framework
+      - sdk: Accelerate.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.virtualsoundcard
+        PRODUCT_NAME: HydraVirtualSoundcard
+        MACOSX_DEPLOYMENT_TARGET: "11.0"
+        WRAPPER_EXTENSION: driver
+        MACH_O_TYPE: mh_bundle
+        INFOPLIST_FILE: Backplane/Driver/Hydra.plist
+        GENERATE_INFOPLIST_FILE: NO
+        INSTALL_PATH: /Library/Audio/Plug-Ins/HAL
+        SKIP_INSTALL: YES
+        ARCHS: arm64 x86_64
+        ONLY_ACTIVE_ARCH: NO
+        GCC_WARN_TYPECHECK_CALLS_TO_PRINTF: NO
+
+  # ── Tests ──────────────────────────────────────────────────────────────────
+  HydraCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [Tests/HydraCoreTests]
+    dependencies:
+      - target: HydraCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.core.tests
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks"
+
+  HydraRTTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [Tests/HydraRTTests]
+    dependencies:
+      - target: HydraRT
+      - target: HydraCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.rt.tests
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks"
+
+schemes:
+  HydraApp:
+    build:
+      targets:
+        HydraApp: all
+    run:
+      config: Debug
+    test:
+      targets: [HydraCoreTests, HydraRTTests]
+  hydrad:
+    build:
+      targets:
+        hydrad: all
+    test:
+      targets: [HydraCoreTests, HydraRTTests]
+  HydraCore:
+    build:
+      targets:
+        HydraCore: all
+    test:
+      targets: [HydraCoreTests]
+  HydraRTTests:
+    build:
+      targets:
+        HydraRT: all
+    test:
+      targets: [HydraRTTests]
+  HydraVirtualSoundcard.driver:
+    build:
+      targets:
+        HydraVirtualSoundcard: all

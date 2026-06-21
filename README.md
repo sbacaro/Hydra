@@ -9,36 +9,36 @@ NDI over the wire, scenes, recording and OSC remote control.
 [BlackHole](https://github.com/ExistentialAudio/BlackHole) driver (see
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)).
 
-Current version: **0.20.0 beta** (see [`CHANGELOG.md`](CHANGELOG.md)).
+Current version: **0.21.0 beta** (see [`CHANGELOG.md`](CHANGELOG.md)).
 Requires **macOS 26 (Tahoe)**. Full design notes:
 [`PROJETO_HYDRA_FUNDACAO.md`](docs/PROJETO_HYDRA_FUNDACAO.md).
 
 ## Download & Installation
 
 ### Quick Install (Recommended)
-Download the installer from the latest [GitHub release](https://github.com/sbacaro/Hydra/releases/latest):
+Download the installer from the latest [GitHub release](https://github.com/sbacaro/Hydra-Soundcard/releases/latest):
 
 ```bash
 # Download and install
-curl -L https://github.com/sbacaro/Hydra/releases/download/v0.20.0/Hydra-0.20.0.pkg -o Hydra.pkg
+curl -L https://github.com/sbacaro/Hydra-Soundcard/releases/download/v0.21.0/Hydra-0.21.0.pkg -o Hydra.pkg
 open Hydra.pkg
 ```
 
 ### Manual Installation
-Download the [ZIP archive](https://github.com/sbacaro/Hydra/releases/download/v0.20.0/Hydra-0.20.0.zip) and run:
+Download the [ZIP archive](https://github.com/sbacaro/Hydra-Soundcard/releases/download/v0.21.0/Hydra-0.21.0.zip) and run:
 
 ```bash
-unzip Hydra-0.20.0.zip
-cd Hydra-0.20.0
+unzip Hydra-0.21.0.zip
+cd Hydra-0.21.0
 sudo bash install.sh
 ```
 
 ### Updates
 After the first install, Hydra updates itself. It checks GitHub for new releases
-on launch and every 24 h, notifies you in-app, and installs the new version on
-your confirmation (powered by [Sparkle](https://sparkle-project.org), EdDSA-signed).
-The audio driver is refreshed automatically when it changes. You can also check
-anytime via **Hydra ▸ Check for Updates…**. Maintainers: see
+on launch and every 24 h and, when one is found, downloads the installer, verifies
+it against its published SHA-256 checksum, and installs it after a single macOS
+password prompt — then relaunches. The app and audio driver are updated together.
+You can also check anytime via **Hydra ▸ Check for Updates…**. Maintainers: see
 [`Packaging/RELEASING.md`](Packaging/RELEASING.md).
 
 ## Features
@@ -187,8 +187,8 @@ restarts.
 
 ## Support & Feedback
 
-- **Issues:** https://github.com/sbacaro/Hydra/issues
-- **Discussions:** https://github.com/sbacaro/Hydra/discussions
+- **Issues:** https://github.com/sbacaro/Hydra-Soundcard/issues
+- **Discussions:** https://github.com/sbacaro/Hydra-Soundcard/discussions
 - **Documentation:** See [`PROJETO_HYDRA_FUNDACAO.md`](docs/PROJETO_HYDRA_FUNDACAO.md) for complete architecture
 - **Changelog:** [`CHANGELOG.md`](CHANGELOG.md)
 
@@ -202,4 +202,4 @@ repository.
 
 ---
 
-**Latest Release:** [Hydra 0.20.0 beta](https://github.com/sbacaro/Hydra/releases/tag/v0.20.0) · Released June 20, 2026
+**Latest Release:** [Hydra 0.21.0 beta](https://github.com/sbacaro/Hydra-Soundcard/releases/tag/v0.21.0) · Released June 21, 2026

@@ -519,9 +519,8 @@ private struct PluginPicker: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else {
-                // Search field — uses the native .roundedBorder style.
-                TextField("Search plugins…", text: $search)
-                    .textFieldStyle(.roundedBorder)
+                // Native search field (magnifying glass + clear button).
+                SearchField(text: $search, prompt: "Search plug-ins")
 
                 if filtered.isEmpty {
                     Text("Nothing matches \"\(search)\".")

@@ -54,11 +54,34 @@ enum Diagnostics {
         out += "Hardware:    \(sysctlString("hw.model"))\n"
         out += "CPU:         \(sysctlString("machdep.cpu.brand_string"))\n\n"
         out += "Status\n------\n\(statusSummary)\n\n"
+        out += "MetricKit diagnostics (crash / hang / performance payloads)\n"
+        out += "-----------------------------------------------------------\n"
+        out += metricKitSummary()
+        out += "\n"
         out += "Unified logs — last 2h, subsystem audio.hydra (app + daemon)\n"
         out += "-----------------------------------------------------------\n"
         out += runLogShow()
         out += "\n"
         return out
+    }
+
+    /// Lists the MetricKit payloads MetricsReporter has saved, so a support
+    /// ticket can point at (or attach) the raw crash/hang JSON.
+    nonisolated private static func metricKitSummary() -> String {
+        let dir = MetricsReporter.diagnosticsDirectory
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles]))?
+            .filter { $0.pathExtension == "json" }
+            .sorted { $0.lastPathComponent > $1.lastPathComponent } ?? []
+        guard !files.isEmpty else {
+            return "(none yet — MetricKit delivers payloads ~daily and after a crash)\n"
+        }
+        var text = "Folder: \(dir.path)\n"
+        for url in files.prefix(20) {
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            text += "  • \(url.lastPathComponent)  (\(size) bytes)\n"
+        }
+        return text
     }
 
     /// `log show` for our subsystem only — bounded and privacy-scoped to Hydra.

@@ -24,6 +24,7 @@ import Foundation
 import Accelerate
 import CoreAudio
 import HydraCore
+import HydraRT
 import os
 
 /// Anything that feeds audio into / drains audio from the engine across a

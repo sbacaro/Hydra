@@ -24,8 +24,8 @@ require 'xcodeproj'
 ROOT       = File.expand_path('..', __dir__)
 PROJ_PATH  = File.join(ROOT, 'Hydra.xcodeproj')
 DEPLOY     = '26.0'
-MARKETING  = '0.20.0'
-BUILD_NUM  = '0.20.0'
+MARKETING  = '0.21.0'
+BUILD_NUM  = '0.21.0'
 SRC_EXT    = %w[.swift .c .m .mm .cpp .cc].freeze
 
 project = Xcodeproj::Project.new(PROJ_PATH)
@@ -165,6 +165,16 @@ core = project.new_target(:framework, 'HydraCore', :osx, DEPLOY, nil, :swift)
 sync_dir(project, core, 'Sources/HydraCore')
 common!(core, 'audio.hydra.core', 'DEFINES_MODULE' => 'YES')
 
+# Real-time DSP library (SPSC ring + polyphase resampler integration), split out
+# of the daemon so it can be unit-tested directly (HydraRTTests). Depends on
+# HydraCore; uses CoreAudio (AudioBufferList helpers) + Synchronization (atomics).
+rt = project.new_target(:framework, 'HydraRT', :osx, DEPLOY, nil, :swift)
+sync_dir(project, rt, 'Sources/HydraRT')
+rt.add_dependency(core)
+rt.frameworks_build_phase.add_file_reference(core.product_reference, true)
+rt.add_system_framework(%w[CoreAudio])
+common!(rt, 'audio.hydra.rt', 'DEFINES_MODULE' => 'YES')
+
 # --- C / C++ shims: framework + explicit modulemap so Swift can `import` them.
 def c_framework(project, name, dir, public_header, modulemap, bundle_id, extra = {})
   fw = project.new_target(:framework, name, :osx, DEPLOY, nil, :c)
@@ -237,7 +247,7 @@ common!(daemon, 'audio.hydra.daemon', {
   'LD_RUNPATH_SEARCH_PATHS'=> "$(inherited) #{RPATH}",
   'PRODUCT_NAME'           => 'hydrad'
 })
-link_and_embed(daemon, [core, vst, ndishim, moduleabi, pluginhostabi])
+link_and_embed(daemon, [core, rt, vst, ndishim, moduleabi, pluginhostabi])
 
 # Out-of-process VST chain host (crash isolation). Built as an .app so a later
 # iteration can host plugin editor GUIs (AppKit) in the same crashable process.
@@ -281,25 +291,8 @@ common!(app, 'audio.hydra.app', {
 })
 link_and_embed(app, [core])
 
-# --- Sparkle (in-app auto-update) — prebuilt framework embedded in the app. ---
-# Fetch it NOW, at generation time: an embedded framework must exist before Xcode
-# "plans" the build, so a build-time fetch phase (like the VST3 SDK's) would be too
-# late and the build would fail with "framework not found".
-unless system('bash', File.join(__dir__, 'fetch_sparkle.sh'))
-  abort 'generate_xcodeproj: fetch_sparkle.sh failed — cannot embed Sparkle.'
-end
-sparkle_ref = project.new_file('ThirdParty/Sparkle/Sparkle.framework')
-sparkle_ref.explicit_file_type = 'wrapper.framework'
-app.frameworks_build_phase.add_file_reference(sparkle_ref, true)
-sparkle_embed = app.new_copy_files_build_phase('Embed Sparkle')
-sparkle_embed.symbol_dst_subfolder_spec = :frameworks
-sparkle_embed.dst_path = ''
-sparkle_bf = sparkle_embed.add_file_reference(sparkle_ref, true)
-sparkle_bf.settings = { 'ATTRIBUTES' => %w[CodeSignOnCopy RemoveHeadersOnCopy] }
-# Let the linker find the embedded XCFramework.
-each_config(app) do |_cfg, s, _release|
-  s['FRAMEWORK_SEARCH_PATHS'] = '$(inherited) $(SRCROOT)/ThirdParty/Sparkle'
-end
+# In-app auto-update is implemented in Sources/HydraApp/Updater.swift using only
+# system frameworks (URLSession + CryptoKit + AppKit) — no embedded framework.
 
 # App icon + accent: the asset catalog lives at the repo root (Media.xcassets).
 # Add it to the app's resources so actool compiles AppIcon into the bundle —
@@ -397,6 +390,21 @@ common!(tests, 'audio.hydra.core.tests', {
   'CODE_SIGN_IDENTITY'      => '-'
 })
 
+# Real-time DSP tests — exercise HydraRT (SPSC ring + polyphase resampler)
+# directly, including under TSan/ASan (see the HydraRTTests scheme + CI).
+rtTests = project.new_target(:unit_test_bundle, 'HydraRTTests', :osx, DEPLOY, nil, :swift)
+sync_dir(project, rtTests, 'Tests/HydraRTTests')
+rtTests.add_dependency(core)
+rtTests.add_dependency(rt)
+rtTests.frameworks_build_phase.add_file_reference(core.product_reference, true)
+rtTests.frameworks_build_phase.add_file_reference(rt.product_reference, true)
+common!(rtTests, 'audio.hydra.rt.tests', {
+  'LD_RUNPATH_SEARCH_PATHS' => '$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks',
+  'GENERATE_INFOPLIST_FILE' => 'YES',
+  'CODE_SIGN_STYLE'         => 'Manual',
+  'CODE_SIGN_IDENTITY'      => '-'
+})
+
 # The xcodeproj gem seeds every new target with ENABLE_MODULE_VERIFIER = YES,
 # which OVERRIDES the project-level NO and makes the clang module verifier fail on
 # the VST3 SDK's C++ headers (Command VerifyModule failed). Force it off on every
@@ -428,6 +436,7 @@ end
 shared_scheme(project, 'HydraApp', app, tests)
 shared_scheme(project, 'hydrad', daemon, tests)
 shared_scheme(project, 'HydraCore', core, tests)
+shared_scheme(project, 'HydraRTTests', core, rtTests)
 shared_scheme(project, 'HydraVirtualSoundcard.driver', driver)
 
 puts "Wrote #{PROJ_PATH}"

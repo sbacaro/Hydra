@@ -121,7 +121,7 @@ final class InstallManager: ObservableObject {
 
     private static var didCheckDriverRefresh = false
 
-    // MARK: - Driver version refresh (after a Sparkle app update)
+    // MARK: - Driver version refresh (after an app update)
 
     /// Reinstalls the HAL driver when the copy bundled in the (possibly just-
     /// updated) app is newer than the one in /Library/Audio/Plug-Ins/HAL. No-op

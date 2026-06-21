@@ -8,6 +8,7 @@
 import Foundation
 import CoreAudio
 import HydraCore
+import HydraRT
 
 // MARK: - DeviceIO: one opted-in, present device
 

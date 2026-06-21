@@ -6,7 +6,7 @@ import Foundation
 
 public enum Hydra {
     // MARK: Version
-    public static let version = "0.20.0"
+    public static let version = "0.21.0"
     public static let stage = "beta"
     public static var versionString: String { "\(version) \(stage)" }
 
@@ -35,7 +35,7 @@ public enum Hydra {
     // MARK: Legal
     /// Where the complete corresponding source lives (GPL §6). Update when
     /// the public repository is published.
-    public static let sourceURL = "https://github.com/samuelbacaro/hydra-audio"
+    public static let sourceURL = "https://github.com/sbacaro/Hydra-Soundcard"
 
     // MARK: UI
     /// Accent color (Apple system indigo) as hex, used by the app.

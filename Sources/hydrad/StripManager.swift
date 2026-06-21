@@ -12,6 +12,7 @@
 import Foundation
 import Accelerate
 import HydraCore
+import HydraRT
 import HydraVST
 
 // MARK: - ChainTap: an insert sequence as an engine node

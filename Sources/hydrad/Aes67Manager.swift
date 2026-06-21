@@ -18,6 +18,7 @@
 import Foundation
 import Network
 import HydraCore
+import HydraRT
 
 // MARK: - MulticastReceiver: BSD-socket multicast RX
 

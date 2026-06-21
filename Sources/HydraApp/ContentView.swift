@@ -76,8 +76,8 @@ struct ContentView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             statusBar
         }
-        // In-app update nudge — appears when Sparkle has found a new release.
-        // The actual update flow runs through Sparkle's standard UI.
+        // In-app update nudge — appears when the updater finds a newer release.
+        // The download + verified install runs automatically (see Updater.swift).
         .safeAreaInset(edge: .top, spacing: 0) {
             if let version = updater.availableVersion {
                 updateBanner(version: version)

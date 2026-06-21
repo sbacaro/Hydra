@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "97494D2DD327725B17AF4676"
+               BlueprintIdentifier = "8709DB757C7B4DEFBCE8B4C6"
                BuildableName = "hydrad.app"
                BlueprintName = "hydrad"
                ReferencedContainer = "container:Hydra.xcodeproj">
@@ -30,7 +30,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "97494D2DD327725B17AF4676"
+            BlueprintIdentifier = "8709DB757C7B4DEFBCE8B4C6"
             BuildableName = "hydrad.app"
             BlueprintName = "hydrad"
             ReferencedContainer = "container:Hydra.xcodeproj">
@@ -41,7 +41,7 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "50B46BD63244632E701278E0"
+               BlueprintIdentifier = "4D6A3F3200886D2CFD9C8997"
                BuildableName = "HydraCoreTests.xctest"
                BlueprintName = "HydraCoreTests"
                ReferencedContainer = "container:Hydra.xcodeproj">
@@ -63,7 +63,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "97494D2DD327725B17AF4676"
+            BlueprintIdentifier = "8709DB757C7B4DEFBCE8B4C6"
             BuildableName = "hydrad.app"
             BlueprintName = "hydrad"
             ReferencedContainer = "container:Hydra.xcodeproj">
@@ -80,7 +80,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "97494D2DD327725B17AF4676"
+            BlueprintIdentifier = "8709DB757C7B4DEFBCE8B4C6"
             BuildableName = "hydrad.app"
             BlueprintName = "hydrad"
             ReferencedContainer = "container:Hydra.xcodeproj">

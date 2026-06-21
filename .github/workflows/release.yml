@@ -1,18 +1,19 @@
 name: Release
 
 # Cut a release by pushing a version tag, e.g.:
-#   git tag v0.20.0 && git push origin v0.20.0
+#   git tag v0.21.0 && git push origin v0.21.0
+# (Scripts/release.sh does this for you.)
 #
-# This builds a universal (ad-hoc signed) Hydra.app, zips it, signs the zip with
-# the Sparkle EdDSA key, generates the appcast, and attaches BOTH the zip and
-# appcast.xml to the GitHub Release. The app's SUFeedURL points at
-# releases/latest/download/appcast.xml, so shipping a new tagged release is all it
-# takes for existing installs to see the update.
+# This builds the signed-or-unsigned .pkg installer (app + HAL driver), computes
+# its SHA-256, and attaches BOTH to the GitHub Release. The in-app updater
+# (Sources/HydraApp/Updater.swift) polls the latest release, downloads the .pkg,
+# verifies it against the .pkg.sha256 sidecar, and installs it via an admin
+# prompt. No Sparkle / appcast.
 #
-# One-time setup (see Packaging/RELEASING.md):
-#   • Generate EdDSA keys with ThirdParty/Sparkle/bin/generate_keys.
-#   • Paste the PUBLIC key into Sources/HydraApp/Info.plist (SUPublicEDKey).
-#   • Export the PRIVATE key and store it as the repo secret SPARKLE_ED_PRIVATE_KEY.
+# Optional signing secrets (for notarizable public distribution; not required for
+# the checksum-verified in-app update):
+#   APP_SIGN_ID        "Developer ID Application: NAME (TEAMID)"
+#   INSTALLER_SIGN_ID  "Developer ID Installer: NAME (TEAMID)"
 
 on:
   push:
@@ -29,71 +30,51 @@ concurrency:
 
 jobs:
   release:
-    name: Build, sign & publish
+    name: Build & publish installer
+    # Only the canonical repo cuts releases — a fork pushing a tag must never
+    # publish an installer that the in-app updater would fetch.
+    if: github.repository == 'sbacaro/Hydra-Soundcard'
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Toolchain
         run: |
           sw_vers
           xcodebuild -version
 
-      - name: Install xcodeproj gem
-        run: gem install xcodeproj --no-document
+      - name: Install XcodeGen
+        run: brew install xcodegen
 
-      - name: Generate Xcode project (also fetches Sparkle)
-        run: ruby Scripts/generate_xcodeproj.rb
+      - name: Generate Xcode project
+        run: xcodegen generate
 
-      - name: Build Hydra.app (Release, universal, ad-hoc signed)
+      - name: Build installer (.pkg)
+        env:
+          APP_SIGN_ID: ${{ secrets.APP_SIGN_ID }}
+          INSTALLER_SIGN_ID: ${{ secrets.INSTALLER_SIGN_ID }}
         run: |
           set -o pipefail
-          xcodebuild build \
-            -project Hydra.xcodeproj -scheme HydraApp -configuration Release \
-            -derivedDataPath build \
-            ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
-            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="-"
+          bash Packaging/build_pkg.sh
 
-      - name: Resolve version + tag
+      - name: Resolve version + checksum
         id: vars
         run: |
-          APP="build/Build/Products/Release/Hydra.app"
-          [ -d "$APP" ] || { echo "::error::built app missing: $APP"; exit 1; }
-          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+          PKG="$(ls dist/Hydra-*.pkg | head -1)"
+          [ -f "$PKG" ] || { echo "::error::no .pkg produced in dist/"; exit 1; }
+          VERSION="$(basename "$PKG" | sed -E 's/^Hydra-(.*)\.pkg$/\1/')"
+          ( cd dist && shasum -a 256 "$(basename "$PKG")" > "$(basename "$PKG").sha256" )
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          echo "pkg=$PKG" >> "$GITHUB_OUTPUT"
+          echo "sha=$PKG.sha256" >> "$GITHUB_OUTPUT"
+          echo "Checksum: $(cat "$PKG.sha256")"
 
-      - name: Zip the app (ditto preserves the bundle)
-        run: |
-          ditto -c -k --sequesterRsrc --keepParent \
-            "${{ steps.vars.outputs.app }}" "Hydra-${{ steps.vars.outputs.version }}.zip"
-
-      - name: Sign + generate appcast (Sparkle EdDSA)
-        env:
-          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
-        run: |
-          if [ -z "${SPARKLE_ED_PRIVATE_KEY:-}" ]; then
-            echo "::error::Missing secret SPARKLE_ED_PRIVATE_KEY — see Packaging/RELEASING.md"
-            exit 1
-          fi
-          KEY_FILE="$RUNNER_TEMP/sparkle_ed_private_key"
-          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$KEY_FILE"
-          mkdir -p sparkle-feed
-          cp "Hydra-${{ steps.vars.outputs.version }}.zip" sparkle-feed/
-          ./ThirdParty/Sparkle/bin/generate_appcast \
-            --ed-key-file "$KEY_FILE" \
-            --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/${{ steps.vars.outputs.tag }}/" \
-            sparkle-feed
-          rm -f "$KEY_FILE"
-          test -f sparkle-feed/appcast.xml || { echo "::error::appcast.xml not generated"; exit 1; }
-
-      - name: Publish GitHub Release (zip + appcast)
-        uses: softprops/action-gh-release@v2
+      - name: Publish GitHub Release (pkg + sha256)
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
-          tag_name: ${{ steps.vars.outputs.tag }}
+          tag_name: ${{ github.ref_name }}
           name: Hydra ${{ steps.vars.outputs.version }}
           generate_release_notes: true
           files: |
-            Hydra-${{ steps.vars.outputs.version }}.zip
-            sparkle-feed/appcast.xml
+            ${{ steps.vars.outputs.pkg }}
+            ${{ steps.vars.outputs.sha }}

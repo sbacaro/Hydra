@@ -30,7 +30,11 @@ public enum ResampleServo {
 
     /// True when there are not enough buffered frames to satisfy `frames`
     /// output frames at the current `step` (consumer must emit silence).
-    public static func isUnderrun(fill: Double, step: Double, frames: Int) -> Bool {
-        !(fill >= step * Double(frames) + 2)
+    ///
+    /// `lookahead` reserves extra frames for an interpolation kernel that reads
+    /// ahead of the read position (e.g. the polyphase resampler's half-width);
+    /// pass 0 for plain linear interpolation.
+    public static func isUnderrun(fill: Double, step: Double, frames: Int, lookahead: Int = 0) -> Bool {
+        !(fill >= step * Double(frames) + Double(lookahead) + 2)
     }
 }

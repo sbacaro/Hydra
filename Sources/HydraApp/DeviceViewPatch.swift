@@ -19,7 +19,10 @@ struct DeviceViewPatch: View {
     let collapseByDevice: Bool
     @Binding var expandedDevices: Set<String>
 
-    private let sourcesByID: [String: GridEntry]
+    /// Every source keyed by "nodeID:channel" — stereo lanes are expanded to
+    /// BOTH of their channels, so a connection resolves to the friendly lane
+    /// label (e.g. "Safari ·St") instead of the raw node id.
+    private let sourceByPoint: [String: GridEntry]
 
     init(sources: [GridView.GroupDef],
          destinations: [GridView.GroupDef],
@@ -32,8 +35,10 @@ struct DeviceViewPatch: View {
         self.collapseByDevice = collapseByDevice
         self._expandedDevices = expandedDevices
 
-        self.sourcesByID = Dictionary(
-            sources.flatMap(\.entries).map { ($0.id, $0) },
+        self.sourceByPoint = Dictionary(
+            sources.flatMap(\.entries).flatMap { entry in
+                entry.channels.map { ("\(entry.nodeID):\($0)", entry) }
+            },
             uniquingKeysWith: { first, _ in first })
     }
 
@@ -217,8 +222,7 @@ struct DeviceViewPatch: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Available Channels")
                 .font(.system(size: 13, weight: .semibold))
-            TextField("Filter", text: $filter)
-                .textFieldStyle(.roundedBorder)
+            SearchField(text: $filter, prompt: "Filter")
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
@@ -362,17 +366,52 @@ struct DeviceViewPatch: View {
     // MARK: Lookups
 
     private func sourcesConnected(to destination: GridEntry) -> [GridEntry] {
+        var seen = Set<String>()
         return client.connections
             .filter { $0.destination == destination.point }
             .compactMap { conn -> GridEntry? in
-                let id = "\(conn.source.nodeID):\(conn.source.channelIndex)"
-                if let entry = sourcesByID[id] { return entry }
-                return GridEntry(nodeID: conn.source.nodeID,
-                                 channels: [conn.source.channelIndex],
-                                 label: "\(conn.source.nodeID) \(conn.source.channelIndex + 1)",
-                                 shortLabel: "\(conn.source.channelIndex + 1)")
+                let key = "\(conn.source.nodeID):\(conn.source.channelIndex)"
+                // Resolve to the visible lane (handles stereo lanes), else a
+                // friendly fallback. Dedupe so a stereo L→L / R→R pair shows the
+                // lane once rather than twice.
+                let entry = sourceByPoint[key] ?? fallbackEntry(for: conn.source)
+                guard seen.insert(entry.id).inserted else { return nil }
+                return entry
             }
             .sorted { $0.label < $1.label }
+    }
+
+    /// A readable entry for a source that isn't in the visible source list,
+    /// resolving the node's human name from the daemon's collections.
+    private func fallbackEntry(for point: PatchPoint) -> GridEntry {
+        let name = nodeDisplayName(point.nodeID)
+        return GridEntry(nodeID: point.nodeID,
+                         channels: [point.channelIndex],
+                         label: "\(name) \(point.channelIndex + 1)",
+                         shortLabel: "\(point.channelIndex + 1)")
+    }
+
+    private func nodeDisplayName(_ nodeID: String) -> String {
+        if let app = client.apps.first(where: { $0.nodeID == nodeID }) {
+            return String(app.name.prefix(12))
+        }
+        if let dev = client.devices.first(where: { $0.nodeID == nodeID }) {
+            return String(dev.name.prefix(10))
+        }
+        if let stream = client.aes67.streams.first(where: { $0.nodeID == nodeID }) {
+            return String(stream.name.prefix(10))
+        }
+        if let ndi = client.ndi.sources.first(where: { Hydra.ndiNodeID(sourceID: $0.id) == nodeID }) {
+            return String(ndi.name.prefix(12))
+        }
+        if let mod = client.modules.sources.first(where: { Hydra.moduleNodeID(sourceID: $0.id) == nodeID }) {
+            return String(mod.name.prefix(12))
+        }
+        // Last resort: a bundle id like "app:com.apple.Safari" → "Safari".
+        if let key = Hydra.appKey(fromNodeID: nodeID) {
+            return String(key.split(separator: ".").last ?? Substring(key))
+        }
+        return nodeID
     }
 
     private var filteredSources: [GridView.GroupDef] {

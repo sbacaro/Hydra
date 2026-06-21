@@ -79,8 +79,8 @@ struct HydraApp: App {
     }
 }
 
-/// "Check for Updates…" in the app menu (just below About). Drives Sparkle's
-/// standard update UI; also reachable from the menu bar panel and Settings.
+/// "Check for Updates…" in the app menu (just below About). Triggers the in-app
+/// updater (see Updater.swift); also reachable from the menu bar panel and Settings.
 struct UpdateCommands: Commands {
     let updater: Updater
 
@@ -120,8 +120,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Menu-bar-first: no Dock icon at launch.
         NSApp.setActivationPolicy(.accessory)
 
-        // Begin Sparkle's scheduled checks (on launch + every 24h per Info.plist).
+        // Begin the in-app updater's scheduled checks (on launch + every 24h).
         updater.start()
+
+        // Subscribe to MetricKit so crash/hang/performance reports are captured
+        // locally (no third-party telemetry).
+        MetricsReporter.shared.start()
 
         // First run still presents the onboarding window (see the App's launch
         // behavior). Since we're an LSUIElement agent, foreground it explicitly so

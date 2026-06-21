@@ -316,12 +316,7 @@ struct SidebarView: View {
     }
 
     private func statusTag(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 9, weight: .bold))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
-            .background(Capsule().fill(.quaternary))
+        Badge(text, small: true)
             .help("\(text) TX on")
     }
 

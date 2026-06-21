@@ -77,4 +77,10 @@ struct ResampleServoTests {
         #expect(ResampleServo.isUnderrun(fill: 500, step: 2.0, frames: 256))
         #expect(!ResampleServo.isUnderrun(fill: 520, step: 2.0, frames: 256))
     }
+
+    @Test func lookaheadReservesKernelHeadroom() {
+        // step 1.0, 512 frames → base need 514; a 24-tap kernel needs 24 more.
+        #expect(ResampleServo.isUnderrun(fill: 520, step: 1.0, frames: 512, lookahead: 24))
+        #expect(!ResampleServo.isUnderrun(fill: 540, step: 1.0, frames: 512, lookahead: 24))
+    }
 }

@@ -283,20 +283,8 @@ private struct PluginsSettingsPane: View {
             Section {
                 // Filter bar
                 HStack(spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                        TextField("Search plugins…", text: $search)
-                            .textFieldStyle(.plain)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .cornerRadius(6)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-                    )
-                    .frame(minWidth: 160, maxWidth: 220)
+                    SearchField(text: $search, prompt: "Search plug-ins")
+                        .frame(minWidth: 160, maxWidth: 240)
 
                     Spacer()
 
@@ -436,20 +424,10 @@ private struct PluginRow: View {
             }
             Spacer(minLength: 8)
             if plugin.offline {
-                Text("Offline")
-                    .font(.caption.weight(.medium))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.orange.opacity(0.15), in: Capsule())
-                    .foregroundStyle(.orange)
+                Badge("Offline", tint: .orange)
                     .help("This plug-in hung or crashed during scanning. Fix or remove it, then Rescan.")
             } else {
-                Text(plugin.primaryType)
-                    .font(.caption.weight(.medium))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.secondary.opacity(0.12), in: Capsule())
-                    .foregroundStyle(.secondary)
+                Badge(plugin.primaryType)
             }
         }
         .padding(.horizontal, 14)

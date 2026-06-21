@@ -2,6 +2,56 @@
 
 All notable changes to Hydra are documented here.
 
+## [0.21.0 beta] — 2026-06-21
+
+### Auto-update — self-contained, no third-party framework
+- **Removed Sparkle.** The in-app updater is now a small built-in component
+  (`Updater.swift`, system frameworks only): it polls the latest GitHub Release,
+  downloads the `.pkg`, **verifies it against a published SHA-256 checksum**, and
+  installs it via a single macOS admin prompt, then relaunches. App and audio
+  driver update together. No appcast, no embedded framework, no EdDSA key to
+  manage.
+
+### Audio quality
+- **Polyphase resampler.** Replaced the ASRC ring's 2-tap linear interpolation
+  with a Kaiser-windowed-sinc polyphase kernel (`PolyphaseResampler`), built once
+  per clock ratio. It **anti-aliases on decimation** (cutoff lowered for ratio
+  > 1) — a real quality step up for cross-clock device routing (e.g. 96 ↔ 44.1k).
+
+### Real-time DSP as a testable library (HydraRT)
+- Extracted `ChannelRing` (SPSC ring + resampler) and the AudioBufferList helpers
+  out of the daemon into a new **`HydraRT`** framework, so the real-time path is
+  unit-testable on its own.
+
+### Testing & CI
+- Greatly expanded coverage: exhaustive `HydraCore` parser/model tests, polyphase
+  resampler tests, and a **concurrent producer/consumer ring stress test**.
+- **Sanitizers in CI:** the suite (incl. the ring) runs under AddressSanitizer +
+  UBSan and ThreadSanitizer.
+- **SwiftPM parity:** `swift test` now builds `HydraCore`/`HydraRT` in Swift 6
+  language mode with complete strict-concurrency checking, matching the Xcode build.
+
+### Observability
+- **MetricKit** integration (`MetricsReporter`): crash / hang / CPU-exception /
+  performance payloads are captured locally and listed in the diagnostics export
+  — no third-party telemetry. Logging standardized on `os.Logger`.
+
+### UI — Apple HIG polish
+- Search fields now use the native macOS search control (magnifying glass + clear
+  button + reliable focus) via a reusable `SearchField` — fixes the plug-in search
+  that only focused on the text glyph. Reusable `Badge` for type/status pills.
+- Patch grid: continuous (squircle) corners and **Dynamic Type** support.
+- Device-view list now shows an app's name (e.g. "Safari") instead of its raw
+  node id.
+
+### Build & security
+- **Build migrated to XcodeGen** (`project.yml`); the Ruby generator is kept as a
+  fallback.
+- Update trust model documented (`SECURITY.md`): SHA-256 + repository control.
+  CI runs least-privilege, the release workflow is gated to the canonical repo,
+  and GitHub Actions are pinned to commit SHAs.
+- Repository moved to `github.com/sbacaro/Hydra-Soundcard`.
+
 ## [0.20.0 beta] — 2026-06-20
 
 ### Modernization & Swift 6 Native Concurrency
