@@ -64,11 +64,11 @@ jobs:
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO
 
-      # SwiftPM parity: `swift test` builds HydraCore + HydraCoreTests in Swift 6
-      # language mode (see Package.swift), so the pure code is strict-concurrency
-      # checked the same way here as in the Xcode build.
-      - name: SwiftPM tests (parity)
-        run: swift test
+      # NOTE: no `swift test` step here. `swift test` builds the WHOLE package,
+      # including HydraVST (C++), which needs the VST3 SDK fetched first — that
+      # fetch is an Xcode build phase, not a SwiftPM one. The xcodebuild test
+      # steps above already run the same tests under Swift 6. For SwiftPM parity
+      # locally, run `bash Scripts/fetch_vst3sdk.sh` then `swift test`.
 
       # Smoke-build the app (UI) without signing, so a broken build is caught
       # even when no test covers the changed code.
