@@ -6,7 +6,7 @@
 import Foundation
 import HydraCore
 
-final class EventCenter {
+final class EventCenter: @unchecked Sendable {
     static let shared = EventCenter()
 
     private let queue = DispatchQueue(label: "hydra.events")

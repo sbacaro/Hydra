@@ -119,6 +119,8 @@ final class InstallManager: ObservableObject {
         }
     }
 
+    private static var didCheckDriverRefresh = false
+
     // MARK: - Driver version refresh (after a Sparkle app update)
 
     /// Reinstalls the HAL driver when the copy bundled in the (possibly just-
@@ -126,6 +128,9 @@ final class InstallManager: ObservableObject {
     /// when the driver isn't installed yet (the first-run Welcome handles that) or
     /// when versions match — so it only prompts for admin on a real driver update.
     func refreshDriverIfOutdated() {
+        guard !Self.didCheckDriverRefresh else { return }
+        Self.didCheckDriverRefresh = true
+
         guard !driver.isBusy,
               let bundled = locateBundledDriver(),
               let bundledVersion = Self.bundleVersion(at: bundled) else { return }
@@ -189,14 +194,20 @@ final class InstallManager: ObservableObject {
     nonisolated private static func runPrivilegedDriverInstall(srcPath: String, dstPath: String, halDir: String) -> InstallResult {
         // Write the install steps to a temp script so we don't have to escape a
         // multi-line command inside AppleScript.
+        // Single-quote every path so an app installed under a path containing
+        // spaces, quotes, $ or backticks can't break (or inject into) the
+        // script that runs as root.
+        let qHal = shellQuote(halDir)
+        let qDst = shellQuote(dstPath)
+        let qSrc = shellQuote(srcPath)
         let script = """
         #!/bin/sh
         set -e
-        mkdir -p "\(halDir)"
-        rm -rf "\(dstPath)"
-        cp -R "\(srcPath)" "\(dstPath)"
-        chown -R root:wheel "\(dstPath)"
-        xattr -dr com.apple.quarantine "\(dstPath)" 2>/dev/null || true
+        mkdir -p \(qHal)
+        rm -rf \(qDst)
+        cp -R \(qSrc) \(qDst)
+        chown -R root:wheel \(qDst)
+        xattr -dr com.apple.quarantine \(qDst) 2>/dev/null || true
         # coreaudiod must reload to pick up the new HAL plugin.
         killall coreaudiod 2>/dev/null || true
         exit 0

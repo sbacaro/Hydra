@@ -21,6 +21,7 @@
 // MEDIAN (robust against scheduling spikes).
 
 import Foundation
+import Synchronization
 import HydraCore
 
 struct PtpStatus: Equatable {
@@ -32,7 +33,7 @@ struct PtpStatus: Equatable {
     var offset: Double = 0
 }
 
-final class PtpClock {
+final class PtpClock: @unchecked Sendable {
 
     static let shared = PtpClock()
 
@@ -64,17 +65,14 @@ final class PtpClock {
         var locked = false
         var offset: Double = 0   // PTP seconds = hostSeconds + offset
     }
-    private let snapshotLock = NSLock()
-    private var snapshot = Snapshot()
+    private let snapshot = Mutex<Snapshot>(Snapshot())
 
     // MARK: Public clock API
 
     /// Current PTP time in seconds (TAI epoch 1970), or nil when unlocked.
     /// Safe from any thread.
     func ptpTimeNow() -> Double? {
-        snapshotLock.lock()
-        let snap = snapshot
-        snapshotLock.unlock()
+        let snap = snapshot.withLock { $0 }
         guard snap.locked else { return nil }
         return Self.hostSeconds() + snap.offset
     }
@@ -235,9 +233,9 @@ final class PtpClock {
         status.domain = master?.domain ?? 0
         status.offset = median
 
-        snapshotLock.lock()
-        snapshot = Snapshot(locked: locked, offset: median)
-        snapshotLock.unlock()
+        snapshot.withLock { snap in
+            snap = Snapshot(locked: locked, offset: median)
+        }
 
         if status != published {
             published = status

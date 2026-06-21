@@ -16,7 +16,7 @@ struct PaletteAction: Identifiable {
 }
 
 struct CommandPalette: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     @Binding var isPresented: Bool
     @Binding var sidebarTab: SidebarTab
     @Binding var sidebarVisible: Bool

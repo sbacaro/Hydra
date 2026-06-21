@@ -19,9 +19,23 @@ import Foundation
 import CoreAudio
 import Accelerate
 import AppKit
+import Synchronization
 import HydraCore
 
 // MARK: - AppTap: one captured app (possibly many processes)
+
+/// Tiny heap box for a Float shared between a control thread (writer) and the
+/// audio IOProc (reader) without capturing `self` into the audio block. Backed
+/// by `Atomic<UInt32>` (the Float's bit pattern) so the access is genuinely
+/// race-free with acquire/release ordering — not merely "atomic enough".
+private final class FloatBox {
+    private let bits: Atomic<UInt32>
+    init(_ value: Float) { bits = Atomic(value.bitPattern) }
+    var value: Float {
+        get { Float(bitPattern: bits.load(ordering: .acquiring)) }
+        set { bits.store(newValue.bitPattern, ordering: .releasing) }
+    }
+}
 
 final class AppTap: EngineTap {
     let nodeID: String
@@ -39,7 +53,17 @@ final class AppTap: EngineTap {
     /// sit at the same level as soundcard routing. Calibration constant:
     /// Hydra.appTapMakeupDB. (Tap level does NOT follow the volume knob, so
     /// no dynamic compensation is applied.)
-    var makeupGain: Float = Gain.linear(fromDecibels: Hydra.appTapMakeupDB)
+    ///
+    /// Stored in a heap box so the IOProc closure can read the live value
+    /// WITHOUT capturing `self`. Capturing `self` in a block owned by this
+    /// object's own `procID` would form a retain cycle (self → procID → block
+    /// → self), preventing `deinit` from ever running and leaking the tap's
+    /// aggregate device / process tap on every app-membership change.
+    private let makeupBox = FloatBox(Gain.linear(fromDecibels: Hydra.appTapMakeupDB))
+    var makeupGain: Float {
+        get { makeupBox.value }
+        set { makeupBox.value = newValue }
+    }
 
     private let procScratch: UnsafeMutablePointer<Float>
     private var tapID: AudioObjectID = 0
@@ -121,15 +145,18 @@ final class AppTap: EngineTap {
         var pid: AudioDeviceIOProcID?
         let scratch = procScratch
         let channels = inChannels
+        // Capture only value/reference locals — never `self` — so the IOProcID
+        // this object owns does not retain it back (see makeupBox docs).
+        let makeup = makeupBox
 
-        let status = AudioDeviceCreateIOProcIDWithBlock(&pid, aggregateID, nil) { [self] _, inputData, _, _, _ in
+        let status = AudioDeviceCreateIOProcIDWithBlock(&pid, aggregateID, nil) { _, inputData, _, _, _ in
             let inList = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData))
             let frames = ABLUtil.flatten(inList, into: scratch,
                                          totalChannels: channels,
                                          maxFrames: Hydra.maxIOFrames)
             guard frames > 0 else { return }
             // Undo the output-volume attenuation (taps are post-volume).
-            var gain = makeupGain
+            var gain = makeup.value
             if gain != 1.0 {
                 vDSP_vsmul(scratch, 1, &gain, scratch, 1, vDSP_Length(frames * channels))
             }
@@ -172,6 +199,10 @@ final class ProcessTapManager {
     var onChange: (([AppInfo]) -> Void)?
     /// Current makeup (dB), updated from Settings via setConfig.
     private var makeupDB: Float = Hydra.appTapMakeupDB
+
+    /// Set env `HYDRA_TAP_DEBUG=1` to log per-process audio attribution on each
+    /// refresh — use it to see exactly how Safari/browser helpers are grouped.
+    private static let tapDebug = ProcessInfo.processInfo.environment["HYDRA_TAP_DEBUG"] != nil
 
     func setMakeup(dB: Float) {
         queue.sync {
@@ -261,6 +292,48 @@ final class ProcessTapManager {
         return NSRunningApplication(processIdentifier: rpid)
     }
 
+    /// BSD parent pid of a process (via sysctl), or -1.
+    private static func parentPID(of pid: pid_t) -> pid_t {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, u_int(mib.count), &info, &size, nil, 0) == 0, size > 0 else { return -1 }
+        return info.kp_eproc.e_ppid
+    }
+
+    /// Climb the responsible-process (then BSD-parent) chain until a *regular*
+    /// GUI app is found. This is what attributes a WebKit helper — Safari's
+    /// audio is rendered by the shared GPU process `com.apple.WebKit.GPU`, whose
+    /// single-hop `responsibleApp` lookup often resolves to a non-app — back to
+    /// the browser the user actually sees, so its audio mixes into the right
+    /// node instead of a silent/standalone one. Returns nil when no regular app
+    /// owns the process (caller then falls back to the raw bundle ID).
+    private static func owningApp(for pid: Int32) -> NSRunningApplication? {
+        var seen = Set<pid_t>()
+        var current = pid_t(pid)
+        for _ in 0..<8 {
+            guard !seen.contains(current) else { break }
+            seen.insert(current)
+            if let app = NSRunningApplication(processIdentifier: current),
+               app.activationPolicy == .regular {
+                return app
+            }
+            // Prefer the responsible process (handles XPC/helper children),
+            // then fall back to the BSD parent.
+            if let resp = responsiblePID?(current), resp > 0, resp != current, !seen.contains(resp) {
+                current = resp
+                continue
+            }
+            let parent = parentPID(of: current)
+            if parent > 1, parent != current, !seen.contains(parent) {
+                current = parent
+                continue
+            }
+            break
+        }
+        return nil
+    }
+
     private struct RawProcess {
         let object: AudioObjectID
         let pid: Int32
@@ -301,9 +374,12 @@ final class ProcessTapManager {
             let runningApp = NSRunningApplication(processIdentifier: pid_t(pid))
 
             // Commercial identity: prefer the responsible app (Safari behind
-            // WebKit GPU, Google Chrome behind its helpers), then the helper
-            // suffix strip, then the raw bundle.
-            let responsible = Self.responsibleApp(for: pid)
+            // WebKit GPU, Google Chrome behind its helpers). When the single-hop
+            // lookup misses (the shared WebKit GPU process often resolves to a
+            // non-app), climb the responsible/parent chain to the owning app so
+            // the helper's audio still groups under the browser — otherwise the
+            // browser node is silent. Then the helper suffix strip, then raw.
+            let responsible = Self.responsibleApp(for: pid) ?? Self.owningApp(for: pid)
             let bundleID: String? = responsible?.bundleIdentifier
                 ?? rawBundle.flatMap { $0.isEmpty ? nil : Self.canonicalBundleID($0) }
             let name = responsible?.localizedName
@@ -366,7 +442,29 @@ final class ProcessTapManager {
             }
     }
 
+    /// Logs the full audio-process → app attribution (env-gated). Lets us see
+    /// whether a browser's audio-producing helper (e.g. com.apple.WebKit.GPU)
+    /// is grouping under the browser node or landing somewhere silent.
+    private func dumpAttribution() {
+        guard Self.tapDebug else { return }
+        log("──── Hydra tap attribution ────")
+        for proc in rawProcesses() {
+            let rawBundle = processStringProperty(proc.object, kAudioProcessPropertyBundleID) ?? "—"
+            let respPid = Self.responsiblePID?(pid_t(proc.pid)) ?? -1
+            let owner = Self.responsibleApp(for: proc.pid) ?? Self.owningApp(for: proc.pid)
+            log("  obj=\(proc.object) pid=\(proc.pid) out=\(proc.isPlaying ? "▶" : "·") "
+                + "raw=\(rawBundle) resp.pid=\(respPid) owner=\(owner?.bundleIdentifier ?? "—") "
+                + "→ group=\(proc.bundleID ?? "(pid-only)") name=\(proc.name)")
+        }
+        for group in appGroups() where isCaptured(group) {
+            log("  CAPTURED group=\(group.bundleID ?? "(pid-only)") name=\(group.name) "
+                + "playing=\(group.isPlaying) objs=\(group.objects)")
+        }
+        log("───────────────────────────────")
+    }
+
     private func refreshLocked() {
+        dumpAttribution()
         let groups = appGroups()
         let engineRate = BackplaneProbe.backplaneDeviceID()
             .map(BackplaneProbe.nominalSampleRate) ?? Hydra.defaultSampleRate

@@ -10,19 +10,24 @@
 
 import Foundation
 import SwiftUI
+import Observation
 import HydraCore
 
-/// Per-connection peaks, 10 Hz. Observe ONLY in small leaf views.
+/// Per-connection peaks, 10 Hz. Observe ONLY in small leaf views. @Observable
+/// gives per-property tracking, so a view only re-renders when the values it
+/// actually reads change — no more app-wide invalidation on every meter tick.
 @MainActor
-final class ConnMeters: ObservableObject {
-    @Published var peaks: [String: Float] = [:]
+@Observable
+final class ConnMeters {
+    var peaks: [String: Float] = [:]
 }
 
-/// Per-channel signal booleans. Published only on transitions.
+/// Per-channel signal booleans. Updated only on transitions.
 @MainActor
-final class SignalFlags: ObservableObject {
-    @Published private(set) var inputs: [Bool] = []
-    @Published private(set) var outputs: [Bool] = []
+@Observable
+final class SignalFlags {
+    private(set) var inputs: [Bool] = []
+    private(set) var outputs: [Bool] = []
 
     func update(inputs newInputs: [Bool], outputs newOutputs: [Bool]) {
         if newInputs != inputs { inputs = newInputs }
@@ -31,7 +36,8 @@ final class SignalFlags: ObservableObject {
 }
 
 @MainActor
-final class DaemonClient: ObservableObject {
+@Observable
+final class DaemonClient {
 
     enum ConnectionState: Equatable {
         case connecting
@@ -39,42 +45,44 @@ final class DaemonClient: ObservableObject {
         case disconnected
     }
 
-    @Published private(set) var connectionState: ConnectionState = .disconnected
-    @Published private(set) var status: StatusPayload?
-    @Published private(set) var connections: [Connection] = [] {
-        didSet { rebuildIndex() }
-    }
-    @Published private(set) var labels = ChannelLabelsPayload()
-    @Published private(set) var scenes: [PatchScene] = []
-    @Published private(set) var devices: [PhysicalDeviceInfo] = []
-    @Published private(set) var apps: [AppInfo] = []
-    @Published private(set) var aes67 = Aes67Payload(devices: [], streams: [])
-    @Published private(set) var vst = VSTPayload(available: [])
-    @Published private(set) var strips: [StripInfo] = []
+    private(set) var connectionState: ConnectionState = .disconnected
+    private(set) var status: StatusPayload?
+    /// Assigned via `setConnections(_:)` so the O(1) index stays in sync without
+    /// a `didSet` (which @Observable does not track on stored properties).
+    private(set) var connections: [Connection] = []
+    private(set) var labels = ChannelLabelsPayload()
+    private(set) var scenes: [PatchScene] = []
+    private(set) var devices: [PhysicalDeviceInfo] = []
+    private(set) var apps: [AppInfo] = []
+    private(set) var aes67 = Aes67Payload(devices: [], streams: [])
+    private(set) var vst = VSTPayload(available: [])
+    private(set) var strips: [StripInfo] = []
     /// Per-strip in/out peak levels (linear). Populated when the daemon sends
     /// strip meter data; zero-initialised until then.
-    @Published private(set) var stripMeters: [UUID: StripMeters] = [:]
+    private(set) var stripMeters: [UUID: StripMeters] = [:]
     /// Event log (latest first) + transient toasts.
-    @Published private(set) var events: [HydraEvent] = []
-    @Published private(set) var toasts: [HydraEvent] = []
-    @Published private(set) var config = ConfigPayload()
+    private(set) var events: [HydraEvent] = []
+    private(set) var toasts: [HydraEvent] = []
+    private(set) var config = ConfigPayload()
     /// User-created virtual interfaces (named slices of the soundcard pool).
-    @Published private(set) var interfaces: [VirtualInterfaceInfo] = []
+    private(set) var interfaces: [VirtualInterfaceInfo] = []
     /// NDI runtime state + discovered network sources.
-    @Published private(set) var ndi = NdiPayload()
-    @Published private(set) var modules = ModulesPayload()
+    private(set) var ndi = NdiPayload()
+    private(set) var modules = ModulesPayload()
     /// Active disk recordings (keyed by interface).
-    @Published private(set) var recordings: [RecordingInfo] = []
+    private(set) var recordings: [RecordingInfo] = []
 
     /// High-frequency side channels (see header comment).
     let meters = ConnMeters()
     let signals = SignalFlags()
 
-    /// O(1) lookup by connection ID ("node:ch->node:ch").
-    private var connectionIndex: [String: Connection] = [:]
+    /// Fast lookup index for connections.
+    private(set) var connectionIndex = ConnectionIndex(connections: [])
 
     private var task: URLSessionWebSocketTask?
     private var reconnectScheduled = false
+    /// Consecutive failed reconnects, for exponential backoff (reset on connect).
+    private var reconnectAttempts = 0
 
     /// -50 dBFS: "there is signal here".
     static let signalThreshold: Float = 0.0032
@@ -86,7 +94,7 @@ final class DaemonClient: ObservableObject {
     // MARK: - Grid actions (node-aware: backplane or physical devices)
 
     func connectionAt(source: PatchPoint, destination: PatchPoint) -> Connection? {
-        connectionIndex[Connection(source: source, destination: destination).id]
+        connectionIndex.byID[Connection(source: source, destination: destination).id]
     }
 
     /// Backplane convenience (identity patch, menu bar).
@@ -96,12 +104,15 @@ final class DaemonClient: ObservableObject {
     }
 
     private func rebuildIndex() {
-        var index: [String: Connection] = [:]
-        index.reserveCapacity(connections.count)
-        for c in connections {
-            index[c.id] = c
-        }
-        connectionIndex = index
+        connectionIndex = ConnectionIndex(connections: connections)
+    }
+
+    /// The single mutation point for `connections`, keeping the O(1)
+    /// `connectionIndex` in sync. Replaces the former `didSet` (which the
+    /// @Observable macro does not track on stored properties).
+    private func setConnections(_ new: [Connection]) {
+        connections = new
+        rebuildIndex()
     }
 
     /// Create or update (unity gain by default). Optimistic local update;
@@ -110,7 +121,7 @@ final class DaemonClient: ObservableObject {
         let conn = Connection(source: source, destination: destination, gain: gain)
         var local = PatchMatrix(connections: connections)
         local.upsert(conn)
-        connections = local.connections
+        setConnections(local.connections)
         send(.setConnection(conn))
     }
 
@@ -124,7 +135,7 @@ final class DaemonClient: ObservableObject {
     func removeConnection(_ conn: Connection) {
         var local = PatchMatrix(connections: connections)
         local.remove(source: conn.source, destination: conn.destination)
-        connections = local.connections
+        setConnections(local.connections)
         send(.removeConnection(conn))
     }
 
@@ -348,6 +359,10 @@ final class DaemonClient: ObservableObject {
     // MARK: - Transport
 
     private func connect() {
+        // Tear down any prior task before replacing it, so a stale callback
+        // from the old socket can't cancel the new one (it's matched by
+        // identity in handleDisconnect).
+        task?.cancel()
         connectionState = .connecting
         let task = URLSession.shared.webSocketTask(with: Hydra.daemonURL)
         self.task = task
@@ -362,9 +377,10 @@ final class DaemonClient: ObservableObject {
                 guard let self, self.task === task else { return }
                 switch result {
                 case .failure:
-                    self.handleDisconnect()
+                    self.handleDisconnect(task)
                 case .success(let message):
                     self.connectionState = .connected
+                    self.reconnectAttempts = 0
                     if case .string(let text) = message,
                        let decoded = try? WSMessage.decode(from: text) {
                         self.apply(decoded)
@@ -380,12 +396,12 @@ final class DaemonClient: ObservableObject {
         case .status(let payload):
             if payload != status { status = payload }
         case .matrix(let payload):
-            connections = payload.connections
+            setConnections(payload.connections)
         case .setConnection(let conn):
             // Light gain-only echo from the daemon (no full matrix resend).
             var local = PatchMatrix(connections: connections)
             local.upsert(conn)
-            connections = local.connections
+            setConnections(local.connections)
         case .levels(let payload):
             meters.peaks = payload.peaks
             signals.update(
@@ -437,14 +453,19 @@ final class DaemonClient: ObservableObject {
 
     private func send(_ message: WSMessage) {
         guard let text = try? message.encodedString() else { return }
-        task?.send(.string(text)) { [weak self] error in
+        guard let task else { return }
+        task.send(.string(text)) { [weak self] error in
             if error != nil {
-                Task { @MainActor [weak self] in self?.handleDisconnect() }
+                Task { @MainActor [weak self] in self?.handleDisconnect(task) }
             }
         }
     }
 
-    private func handleDisconnect() {
+    /// Tear down the connection. `failedTask`, when given, scopes the teardown
+    /// to a specific socket: a late failure callback from a task we've already
+    /// replaced is ignored, so it can't kill a freshly reconnected socket.
+    private func handleDisconnect(_ failedTask: URLSessionWebSocketTask? = nil) {
+        if let failedTask, failedTask !== task { return }
         task?.cancel()
         task = nil
         connectionState = .disconnected
@@ -467,8 +488,12 @@ final class DaemonClient: ObservableObject {
     private func scheduleReconnect() {
         guard !reconnectScheduled else { return }
         reconnectScheduled = true
+        // Exponential backoff capped at 30s, so a daemon that stays down does
+        // not get hammered with a wakeup every 2s indefinitely.
+        let delay = min(30.0, 2.0 * pow(2.0, Double(reconnectAttempts)))
+        reconnectAttempts += 1
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: .seconds(delay))
             self?.reconnectScheduled = false
             self?.connect()
         }

@@ -6,7 +6,7 @@ import Foundation
 
 public enum Hydra {
     // MARK: Version
-    public static let version = "0.19.1"
+    public static let version = "0.20.0"
     public static let stage = "beta"
     public static var versionString: String { "\(version) \(stage)" }
 

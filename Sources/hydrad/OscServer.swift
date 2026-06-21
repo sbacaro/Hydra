@@ -8,7 +8,7 @@ import Foundation
 import Network
 import HydraCore
 
-final class OscServer {
+final class OscServer: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "hydra.osc")
     private var listener: NWListener?
@@ -63,6 +63,11 @@ final class OscServer {
             }
             if error == nil {
                 self.receive(on: connection)
+            } else {
+                // Stop reading this peer's connection and release it, instead of
+                // silently leaking a dead NWConnection. The listener will spin
+                // up a fresh one for the next datagram.
+                connection.cancel()
             }
         }
     }

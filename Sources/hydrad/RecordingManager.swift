@@ -13,7 +13,7 @@ import HydraCore
 
 final class RecordingManager {
 
-    private final class Recording {
+    private final class Recording: @unchecked Sendable {
         let info: RecordingInfo
         let tap: PoolTxTap
         private let file: AVAudioFile

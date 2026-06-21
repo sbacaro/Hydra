@@ -72,6 +72,7 @@ if initial.backplaneInstalled {
     log("Backplane NOT found. Build dist/ on the host and run Scripts/vm_install.sh")
 }
 
+@MainActor
 func aes67FullPayload() -> Aes67Payload {
     var payload = aes67Manager.payload()
     payload.txFlows = aes67TxManager.flows()
@@ -82,6 +83,7 @@ func aes67FullPayload() -> Aes67Payload {
     return payload
 }
 
+@MainActor
 func currentStatus() -> StatusPayload {
     var status = BackplaneProbe.currentStatus(engineRunning: engine.isRunning)
     // Rounded so identical-idle payloads stay identical (broadcast skip).
@@ -95,25 +97,27 @@ do {
     server = try WebSocketServer(
         port: Hydra.daemonPort,
         onConnect: { connection in
-            // Push full state so the app renders without asking.
-            server.send(.status(currentStatus()), to: connection)
-            server.send(.matrix(MatrixPayload(connections: store.allConnections())), to: connection)
-            server.send(.labels(labels.all()), to: connection)
-            server.send(.scenes(ScenesPayload(scenes: sceneStore.all())), to: connection)
-            server.send(.devices(DevicesPayload(devices: deviceManager.infos())), to: connection)
-            server.send(.apps(AppsPayload(apps: tapManager.infos())), to: connection)
-            server.send(.aes67(aes67FullPayload()), to: connection)
-            server.send(.vst(stripManager.vstPayload()), to: connection)
-            server.send(.strips(stripManager.stripsPayload()), to: connection)
-            server.send(.events(EventsPayload(events: EventCenter.shared.recent())), to: connection)
-            server.send(.config(configStore.current()), to: connection)
-            server.send(.interfaces(InterfacesPayload(interfaces: interfaceStore.all())), to: connection)
-            server.send(.ndi(ndiManager.payload()), to: connection)
-            server.send(.modules(moduleManager.payload()), to: connection)
-            server.send(.recordings(recordingManager.payload()), to: connection)
+            // Hop to the main actor (the control plane) to push full state.
+            Task { @MainActor in
+                server.send(.status(currentStatus()), to: connection)
+                server.send(.matrix(MatrixPayload(connections: store.allConnections())), to: connection)
+                server.send(.labels(labels.all()), to: connection)
+                server.send(.scenes(ScenesPayload(scenes: sceneStore.all())), to: connection)
+                server.send(.devices(DevicesPayload(devices: deviceManager.infos())), to: connection)
+                server.send(.apps(AppsPayload(apps: tapManager.infos())), to: connection)
+                server.send(.aes67(aes67FullPayload()), to: connection)
+                server.send(.vst(stripManager.vstPayload()), to: connection)
+                server.send(.strips(stripManager.stripsPayload()), to: connection)
+                server.send(.events(EventsPayload(events: EventCenter.shared.recent())), to: connection)
+                server.send(.config(configStore.current()), to: connection)
+                server.send(.interfaces(InterfacesPayload(interfaces: interfaceStore.all())), to: connection)
+                server.send(.ndi(ndiManager.payload()), to: connection)
+                server.send(.modules(moduleManager.payload()), to: connection)
+                server.send(.recordings(recordingManager.payload()), to: connection)
+            }
         },
         onMessage: { message, connection in
-            handleWSMessage(message, from: connection)
+            Task { @MainActor in handleWSMessage(message, from: connection) }
         })
 } catch {
     log("Could not create server on port \(Hydra.daemonPort): \(error)")
@@ -122,37 +126,43 @@ do {
 
 server.start()
 
+// These callbacks fire on the managers' own background queues, but touch the
+// main-actor control plane (server, *FullPayload, …), so they hop to the main
+// actor — otherwise Swift 6 traps the isolation assertion at runtime.
+
 // Events: push every new event live to all clients.
 EventCenter.shared.onEvent = { event in
-    server.broadcast(.event(event))
+    Task { @MainActor in server.broadcast(.event(event)) }
 }
 
 // Physical devices: hot-plug monitoring + initial attach of used devices.
 deviceManager.onChange = { infos in
-    server.broadcast(.devices(DevicesPayload(devices: infos)))
+    Task { @MainActor in server.broadcast(.devices(DevicesPayload(devices: infos))) }
 }
 deviceManager.startMonitoring()
 
 // App capture: process-list monitoring + re-attach of captured apps.
 tapManager.onChange = { infos in
-    server.broadcast(.apps(AppsPayload(apps: infos)))
+    Task { @MainActor in server.broadcast(.apps(AppsPayload(apps: infos))) }
 }
 tapManager.startMonitoring()
 
 // AES67: mDNS presence + SAP/SDP stream discovery + RX subscriptions.
 aes67Manager.onChange = { payload in
-    var full = payload
-    full.txFlows = aes67TxManager.flows()
-    server.broadcast(.aes67(full))
+    Task { @MainActor in
+        var full = payload
+        full.txFlows = aes67TxManager.flows()
+        server.broadcast(.aes67(full))
+    }
 }
 aes67TxManager.onChange = {
-    server.broadcast(.aes67(aes67FullPayload()))
+    Task { @MainActor in server.broadcast(.aes67(aes67FullPayload())) }
 }
 aes67Manager.start()
 
 // NDI: runtime detection, source discovery, RX subscriptions + interface TX.
 ndiManager.onChange = { payload in
-    server.broadcast(.ndi(payload))
+    Task { @MainActor in server.broadcast(.ndi(payload)) }
 }
 ndiManager.start()
 ndiManager.syncTx(interfaces: interfaceStore.all())
@@ -160,17 +170,17 @@ ndiManager.syncTx(interfaces: interfaceStore.all())
 // Modules: generic plugin host (loads external .dylibs if present; none ship
 // with Hydra). Their network sources appear in the grid like NDI sources.
 moduleManager.onChange = { payload in
-    server.broadcast(.modules(payload))
+    Task { @MainActor in server.broadcast(.modules(payload)) }
 }
 moduleManager.start()
 
 // Recordings: state pushes for the app's record buttons.
 recordingManager.onChange = { payload in
-    server.broadcast(.recordings(payload))
+    Task { @MainActor in server.broadcast(.recordings(payload)) }
 }
 
 // OSC remote control: scenes + recordings, addressable by name.
-oscServer.onMessage = { message in
+oscServer.onMessage = { message in Task { @MainActor in
     switch message.address {
     case "/hydra/scene/apply":
         let scene: PatchScene?
@@ -207,43 +217,52 @@ oscServer.onMessage = { message in
     default:
         log("OSC: unhandled address \(message.address)")
     }
-}
+} }
 
 // VST3: plugin scan + channel-strip instantiation.
 stripManager.onChange = { vstPayload, stripsPayload in
-    server.broadcast(.vst(vstPayload))
-    server.broadcast(.strips(stripsPayload))
+    Task { @MainActor in
+        server.broadcast(.vst(vstPayload))
+        server.broadcast(.strips(stripsPayload))
+    }
 }
 stripManager.start()
 
 // PTP slave (Phase 5): disciplines AES67 TX timestamps to the network clock.
 PtpClock.shared.onChange = { status in
-    aes67TxManager.ptpChanged(locked: status.locked)
-    server.broadcast(.aes67(aes67FullPayload()))
+    Task { @MainActor in
+        aes67TxManager.ptpChanged(locked: status.locked)
+        server.broadcast(.aes67(aes67FullPayload()))
+    }
 }
 PtpClock.shared.start()
 
 // Re-probe every 3 s: track backplane presence, manage engine lifecycle,
 // broadcast status changes (e.g. backplane installed while app is open).
 var lastStatus = initial
-let probeTimer = DispatchSource.makeTimerSource(queue: .global())
+// Runs on the main queue (the control plane's MainActor executor) so it can
+// touch the main-actor globals (server, currentStatus, …) without tripping the
+// Swift 6 isolation assertion.
+let probeTimer = DispatchSource.makeTimerSource(queue: .main)
 probeTimer.schedule(deadline: .now() + 3, repeating: 3)
 probeTimer.setEventHandler {
-    let present = BackplaneProbe.backplaneDeviceID() != nil
-    if present && !engine.isRunning {
-        engine.startIfPossible()
-    } else if !present && engine.isRunning {
-        engine.stop()
-    }
-    let status = currentStatus()
-    if status != lastStatus {
-        // Log only real state transitions (metrics tick along silently).
-        if status.backplaneInstalled != lastStatus.backplaneInstalled
-            || status.engineRunning != lastStatus.engineRunning {
-            log("State changed — broadcasting (backplane: \(status.backplaneInstalled ? "present" : "absent"), engine: \(status.engineRunning ? "running" : "stopped"))")
+    MainActor.assumeIsolated {
+        let present = BackplaneProbe.backplaneDeviceID() != nil
+        if present && !engine.isRunning {
+            engine.startIfPossible()
+        } else if !present && engine.isRunning {
+            engine.stop()
         }
-        lastStatus = status
-        server.broadcast(.status(status))
+        let status = currentStatus()
+        if status != lastStatus {
+            // Log only real state transitions (metrics tick along silently).
+            if status.backplaneInstalled != lastStatus.backplaneInstalled
+                || status.engineRunning != lastStatus.engineRunning {
+                log("State changed — broadcasting (backplane: \(status.backplaneInstalled ? "present" : "absent"), engine: \(status.engineRunning ? "running" : "stopped"))")
+            }
+            lastStatus = status
+            server.broadcast(.status(status))
+        }
     }
 }
 probeTimer.resume()
@@ -255,7 +274,7 @@ probeTimer.resume()
 // stream into a couple of messages per audio event, killing the app-side
 // re-layout storm. The channel-strip VU is rendered as a local estimated
 // animation in the app; it only needs the on/off state, not real levels.
-let meterTimer = DispatchSource.makeTimerSource(queue: .global())
+let meterTimer = DispatchSource.makeTimerSource(queue: .main)
 meterTimer.schedule(deadline: .now() + Hydra.meterInterval, repeating: Hydra.meterInterval)
 var lastLevels: LevelsPayload?
 let signalFloor = Hydra.signalFloorLinear
@@ -263,7 +282,7 @@ let release     = Hydra.signalReleaseSeconds
 var lastOn:    [String: Date] = [:]   // connection ID → last over-threshold time
 var lastSrcOn: [Int: Date]    = [:]   // source channel index → last over-threshold
 var lastDstOn: [Int: Date]    = [:]   // destination channel index → last over-threshold
-meterTimer.setEventHandler {
+meterTimer.setEventHandler { MainActor.assumeIsolated {
     let active = engine.isRunning && server.hasClients
     store.channelMeteringEnabled = active
     guard active else { return }
@@ -299,7 +318,7 @@ meterTimer.setEventHandler {
     guard payload != lastLevels else { return }
     lastLevels = payload
     server.broadcast(.levels(payload))
-}
+} }
 meterTimer.resume()
 
 // The daemon runs an accessory NSApplication loop (no Dock icon) instead of

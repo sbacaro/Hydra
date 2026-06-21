@@ -1,0 +1,4 @@
+framework module HydraPluginHostABI {
+    header "hydra_plugin_shm.h"
+    export *
+}

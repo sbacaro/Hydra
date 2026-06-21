@@ -10,7 +10,7 @@ import SwiftUI
 import HydraCore
 
 struct DeviceViewPatch: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     let sources: [GridView.GroupDef]
     let destinations: [GridView.GroupDef]
     @Binding var selection: GridSelection?
@@ -18,6 +18,24 @@ struct DeviceViewPatch: View {
     /// header in Available Channels; OFF = flat tree.
     let collapseByDevice: Bool
     @Binding var expandedDevices: Set<String>
+
+    private let sourcesByID: [String: GridEntry]
+
+    init(sources: [GridView.GroupDef],
+         destinations: [GridView.GroupDef],
+         selection: Binding<GridSelection?>,
+         collapseByDevice: Bool,
+         expandedDevices: Binding<Set<String>>) {
+        self.sources = sources
+        self.destinations = destinations
+        self._selection = selection
+        self.collapseByDevice = collapseByDevice
+        self._expandedDevices = expandedDevices
+
+        self.sourcesByID = Dictionary(
+            sources.flatMap(\.entries).map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first })
+    }
 
     @State private var deviceID: String = ""
     @State private var selectedReceiveIDs: Set<String> = []
@@ -344,13 +362,11 @@ struct DeviceViewPatch: View {
     // MARK: Lookups
 
     private func sourcesConnected(to destination: GridEntry) -> [GridEntry] {
-        let byID = Dictionary(uniqueKeysWithValues:
-            sources.flatMap(\.entries).map { ($0.id, $0) })
         return client.connections
             .filter { $0.destination == destination.point }
             .compactMap { conn -> GridEntry? in
                 let id = "\(conn.source.nodeID):\(conn.source.channelIndex)"
-                if let entry = byID[id] { return entry }
+                if let entry = sourcesByID[id] { return entry }
                 return GridEntry(nodeID: conn.source.nodeID,
                                  channels: [conn.source.channelIndex],
                                  label: "\(conn.source.nodeID) \(conn.source.channelIndex + 1)",
@@ -375,8 +391,8 @@ struct DeviceViewPatch: View {
 /// Signal dot — observes the 10 Hz flags + meter peaks directly.
 /// Used by DeviceViewPatch rows and anywhere else a live signal indicator is needed.
 struct SignalDotPublic: View {
-    @EnvironmentObject private var signals: SignalFlags
-    @EnvironmentObject private var meters: ConnMeters
+    @Environment(SignalFlags.self) private var signals
+    @Environment(ConnMeters.self) private var meters
     let nodeID: String
     let channel: Int
     let output: Bool

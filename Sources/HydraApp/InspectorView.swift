@@ -17,7 +17,7 @@ import AppKit
 import HydraCore
 
 struct InspectorView: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     @Binding var selection: GridSelection?
     @Binding var channelFocus: ChannelFocus?
 
@@ -81,7 +81,7 @@ private func channelNodeName(_ nodeID: String, client: DaemonClient) -> String {
 // MARK: - Single channel strip (opened by clicking a channel name)
 
 private struct SingleChannelStrip: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     let focus: ChannelFocus
 
     private var entry: GridEntry { focus.entry }
@@ -128,7 +128,7 @@ private struct SingleChannelStrip: View {
 // MARK: - Inserts (Audio FX) — shared by the cell strip and the single-channel strip
 
 private struct InsertsSection: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     let strip: StripInfo
     @State private var pickerPresented = false
 
@@ -154,6 +154,7 @@ private struct InsertsSection: View {
 
                     Button {
                         var updated = strip
+                        guard updated.inserts.indices.contains(index) else { return }
                         updated.inserts.remove(at: index)
                         client.setStrip(updated)
                     } label: {
@@ -181,7 +182,18 @@ private struct InsertsSection: View {
                     client.setStrip(updated)
                     pickerPresented = false
                 }
-                .environmentObject(client)
+                .environment(client)
+            }
+
+            if !strip.inserts.isEmpty {
+                Divider().padding(.vertical, 2)
+                Toggle("Crash protection", isOn: Binding(
+                    get: { strip.isolated },
+                    set: { var s = strip; s.isolated = $0; client.setStrip(s) }))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .font(.caption)
+                    .help("Runs this strip's plugins in a separate process so a crashing plugin can't take down Hydra. Turn off for trusted plugins to remove the small added latency.")
             }
         }
     }
@@ -190,7 +202,7 @@ private struct InsertsSection: View {
 // MARK: - Channel strip
 
 private struct ChannelStrip: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     let selection: GridSelection
     let clearSelection: () -> Void
 
@@ -297,6 +309,7 @@ private struct ChannelStrip: View {
 
                         Button {
                             var updated = strip
+                            guard updated.inserts.indices.contains(index) else { return }
                             updated.inserts.remove(at: index)
                             client.setStrip(updated)
                         } label: {
@@ -325,7 +338,7 @@ private struct ChannelStrip: View {
                         client.setStrip(updated)
                         pickerSlotPresented = false
                     }
-                    .environmentObject(client)
+                    .environment(client)
                 }
             }
 
@@ -396,7 +409,7 @@ private struct ChannelStrip: View {
 // MARK: - Renameable channel label
 
 private struct RenameableChannelLabel: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     let entry: GridEntry
     let scope: ChannelScope
     let font: Font
@@ -443,7 +456,7 @@ private struct RenameableChannelLabel: View {
 // MARK: - Plugin picker
 
 private struct PluginPicker: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     let onSelect: (VSTPlugin) -> Void
     @State private var search = ""
 
@@ -550,7 +563,7 @@ private struct PluginPicker: View {
 /// when silent. No metering, no animation; it only changes when on/off flips
 /// (rare), so it costs nothing while the audio plays.
 private struct SignalIndicator: View {
-    @ObservedObject var meters: ConnMeters
+    var meters: ConnMeters
     let connectionIDs: [String]
 
     private var on: Bool { connectionIDs.contains { (meters.peaks[$0] ?? 0) > 0 } }
@@ -575,7 +588,7 @@ private struct SignalIndicator: View {
 // MARK: - Gain slider
 
 private struct CellGainSlider: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     let connections: [Connection]
     let selection: GridSelection
 

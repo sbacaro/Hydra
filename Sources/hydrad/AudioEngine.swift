@@ -4,7 +4,20 @@
 
 import Foundation
 import CoreAudio
+import Synchronization
 import HydraCore
+
+/// Engine metrics shared between the audio IOProc / CoreAudio notification
+/// thread and reader properties. Held in a reference type so it can be captured
+/// into the escaping IOProc block WITHOUT capturing `AudioEngine` (which would
+/// retain it). Backed by `Atomic`, so reads/writes are race-free by the language
+/// model — replacing the old hand-allocated `UnsafeMutablePointer` cells.
+private final class EngineMetrics: @unchecked Sendable {
+    /// Smoothed render-time/cycle-period ratio, stored as the Double bit pattern.
+    let loadBits = Atomic<UInt64>(0)
+    /// CoreAudio processor-overload count since the engine started.
+    let xruns = Atomic<Int>(0)
+}
 
 final class AudioEngine {
 
@@ -14,11 +27,7 @@ final class AudioEngine {
     private(set) var isRunning = false
 
     // Metrics (Phase 7) — written on the audio thread, read anywhere.
-    // cpuLoad = smoothed (render time / cycle period); xruns = CoreAudio
-    // processor-overload notifications since the engine started.
-    private let loadBits = UnsafeMutablePointer<UInt64>.allocate(capacity: 1)
-    private let xrunCount = UnsafeMutablePointer<Int64>.allocate(capacity: 1)
-    private var lastCycleStart: UInt64 = 0
+    private let metrics = EngineMetrics()
     private var overloadAddress = AudioObjectPropertyAddress(
         mSelector: kAudioDeviceProcessorOverload,
         mScope: kAudioObjectPropertyScopeGlobal,
@@ -26,21 +35,14 @@ final class AudioEngine {
     private var overloadBlock: AudioObjectPropertyListenerBlock?
 
     var cpuLoad: Double {
-        Double(bitPattern: loadBits.pointee)
+        Double(bitPattern: metrics.loadBits.load(ordering: .relaxed))
     }
     var xruns: Int {
-        Int(xrunCount.pointee)
+        metrics.xruns.load(ordering: .relaxed)
     }
 
     init(store: MatrixStore) {
         self.store = store
-        loadBits.initialize(to: 0)
-        xrunCount.initialize(to: 0)
-    }
-
-    deinit {
-        loadBits.deallocate()
-        xrunCount.deallocate()
     }
 
     /// Attach + start if the backplane is present. Returns true if state changed.
@@ -50,11 +52,18 @@ final class AudioEngine {
         guard let device = BackplaneProbe.backplaneDeviceID() else { return false }
 
         var pid: AudioDeviceIOProcID?
-        let loadBits = self.loadBits
+        let metrics = self.metrics
         var lastStart: UInt64 = 0
+        // Signpost the render cycle so XRUN/dropout hunts can be done in
+        // Instruments (Points of Interest, subsystem "audio.hydra"). No-op cost
+        // when nothing is recording; lock-free + allocation-free otherwise.
+        let signposter = HydraSignpost.audio
+        let renderID = signposter.makeSignpostID()
         let create = AudioDeviceCreateIOProcIDWithBlock(&pid, device, nil) { [store] _, inputData, _, outputData, _ in
             let begin = mach_absolute_time()
+            let interval = signposter.beginInterval("render", id: renderID)
             store.process(inputData, outputData)
+            signposter.endInterval("render", interval)
             let end = mach_absolute_time()
             // load = busy time / cycle period (both in mach ticks; the
             // ratio cancels the timebase). Exponential smoothing ~1 s.
@@ -62,8 +71,9 @@ final class AudioEngine {
                 let cycle = Double(begin - lastStart)
                 let busy = Double(end - begin)
                 let instant = min(busy / cycle, 1)
-                let previous = Double(bitPattern: loadBits.pointee)
-                loadBits.pointee = (previous + 0.1 * (instant - previous)).bitPattern
+                let previous = Double(bitPattern: metrics.loadBits.load(ordering: .relaxed))
+                metrics.loadBits.store((previous + 0.1 * (instant - previous)).bitPattern,
+                                       ordering: .relaxed)
             }
             lastStart = begin
         }
@@ -81,15 +91,19 @@ final class AudioEngine {
         deviceID = device
         procID = pid
         isRunning = true
-        xrunCount.pointee = 0
-        loadBits.pointee = Double(0).bitPattern
+        metrics.xruns.store(0, ordering: .relaxed)
+        metrics.loadBits.store(Double(0).bitPattern, ordering: .relaxed)
 
-        // XRUN counter: CoreAudio posts processor-overload when a cycle
-        // missed its deadline.
-        let xrunCount = self.xrunCount
+        // XRUN counter: CoreAudio posts processor-overload when a cycle missed
+        // its deadline. This block is the sole writer of `xruns`, so a plain
+        // load+store is correct (no atomic RMW needed).
         let block: AudioObjectPropertyListenerBlock = { _, _ in
-            xrunCount.pointee += 1
-            log("Engine: processor overload (XRUN #\(xrunCount.pointee))")
+            let count = metrics.xruns.load(ordering: .relaxed) + 1
+            metrics.xruns.store(count, ordering: .relaxed)
+            // Mark the XRUN on the Instruments timeline too, so a dropout can be
+            // correlated with whatever the render interval was doing around it.
+            signposter.emitEvent("xrun", id: renderID)
+            HydraLog.audio.error("Processor overload (XRUN #\(count, privacy: .public))")
         }
         overloadBlock = block
         AudioObjectAddPropertyListenerBlock(device, &overloadAddress, nil, block)
@@ -108,7 +122,7 @@ final class AudioEngine {
             AudioObjectRemovePropertyListenerBlock(deviceID, &overloadAddress, nil, block)
             overloadBlock = nil
         }
-        loadBits.pointee = Double(0).bitPattern
+        metrics.loadBits.store(Double(0).bitPattern, ordering: .relaxed)
         procID = nil
         deviceID = 0
         isRunning = false

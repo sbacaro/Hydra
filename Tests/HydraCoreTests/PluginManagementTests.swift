@@ -3,14 +3,15 @@
 // filtering, VST3 type classification, backward-compatible decode, and message
 // round-trips. Pure logic — runs in CI without Core Audio or a host.
 
-import XCTest
+import Testing
+import Foundation
 @testable import HydraCore
 
-final class PluginManagementTests: XCTestCase {
+struct PluginManagementTests {
 
     // MARK: pickerPlugins() — what the strip's insert picker offers.
 
-    func testPickerHidesDisabledAndPutsFavoritesFirst() {
+    @Test func pickerHidesDisabledAndPutsFavoritesFirst() {
         let zebra = VSTPlugin(id: "a", name: "Zebra", vendor: "V")
         let apple = VSTPlugin(id: "b", name: "Apple", vendor: "V")
         let mango = VSTPlugin(id: "c", name: "Mango", vendor: "V")
@@ -18,76 +19,76 @@ final class PluginManagementTests: XCTestCase {
                                  disabledIDs: ["c"],          // Mango hidden
                                  favoriteIDs: ["a"])          // Zebra starred
         // Mango filtered out; Zebra (favorite) first, then Apple alphabetically.
-        XCTAssertEqual(payload.pickerPlugins().map(\.id), ["a", "b"])
+        #expect(payload.pickerPlugins().map(\.id) == ["a", "b"])
     }
 
-    func testPickerDefaultShowsEverythingAlphabetical() {
+    @Test func pickerDefaultShowsEverythingAlphabetical() {
         let p = VSTPayload(available: [
             VSTPlugin(id: "1", name: "Beta",  vendor: "V"),
             VSTPlugin(id: "2", name: "alpha", vendor: "V"),   // case-insensitive sort
         ])
-        XCTAssertEqual(p.pickerPlugins().map(\.name), ["alpha", "Beta"])
+        #expect(p.pickerPlugins().map(\.name) == ["alpha", "Beta"])
     }
 
-    func testPickerExcludesOfflinePlugins() {
+    @Test func pickerExcludesOfflinePlugins() {
         let ok  = VSTPlugin(id: "ok",  name: "Good",   vendor: "V")
         let bad = VSTPlugin(id: "bad", name: "Crashy", vendor: "V", offline: true)
         let p = VSTPayload(available: [ok, bad])
         // An offline (hung/crashed) plugin is shown in the manager but never
         // offered as an insert.
-        XCTAssertEqual(p.pickerPlugins().map(\.id), ["ok"])
+        #expect(p.pickerPlugins().map(\.id) == ["ok"])
     }
 
     // MARK: Type classification from the VST3 subcategory string.
 
-    func testInstrumentDetection() {
-        XCTAssertTrue(VSTPlugin(id: "i", name: "Synth", vendor: "V",
-                                category: "Instrument|Synth").isInstrument)
-        XCTAssertFalse(VSTPlugin(id: "e", name: "EQ", vendor: "V",
-                                 category: "Fx|EQ").isInstrument)
+    @Test func instrumentDetection() {
+        #expect(VSTPlugin(id: "i", name: "Synth", vendor: "V",
+                          category: "Instrument|Synth").isInstrument)
+        #expect(!VSTPlugin(id: "e", name: "EQ", vendor: "V",
+                           category: "Fx|EQ").isInstrument)
     }
 
-    func testPrimaryType() {
-        XCTAssertEqual(VSTPlugin(id: "1", name: "R", vendor: "V", category: "Fx|Reverb").primaryType, "Fx")
-        XCTAssertEqual(VSTPlugin(id: "2", name: "S", vendor: "V", category: "Instrument").primaryType, "Instrument")
+    @Test func primaryType() {
+        #expect(VSTPlugin(id: "1", name: "R", vendor: "V", category: "Fx|Reverb").primaryType == "Fx")
+        #expect(VSTPlugin(id: "2", name: "S", vendor: "V", category: "Instrument").primaryType == "Instrument")
         // Empty category (legacy data) falls back to the historical "Fx".
-        XCTAssertEqual(VSTPlugin(id: "3", name: "L", vendor: "V").primaryType, "Fx")
+        #expect(VSTPlugin(id: "3", name: "L", vendor: "V").primaryType == "Fx")
     }
 
     // MARK: Backward compatibility — old persisted plugins have no `category`.
 
-    func testDecodeLegacyPluginWithoutCategory() throws {
+    @Test func decodeLegacyPluginWithoutCategory() throws {
         let json = Data(#"{"id":"a#0","name":"Comp","vendor":"Acme"}"#.utf8)
         let p = try JSONDecoder().decode(VSTPlugin.self, from: json)
-        XCTAssertEqual(p.category, "")
-        XCTAssertFalse(p.isInstrument)
+        #expect(p.category == "")
+        #expect(!p.isInstrument)
     }
 
-    func testDecodeLegacyPayloadWithoutNewFields() throws {
+    @Test func decodeLegacyPayloadWithoutNewFields() throws {
         // A pre-feature VSTPayload (no disabledIDs/favoriteIDs) must still decode.
         let json = Data(#"{"available":[],"scanning":false,"scanProgress":0,"scanLabel":""}"#.utf8)
         let payload = try JSONDecoder().decode(VSTPayload.self, from: json)
-        XCTAssertEqual(payload.disabledIDs, [])
-        XCTAssertEqual(payload.favoriteIDs, [])
+        #expect(payload.disabledIDs == [])
+        #expect(payload.favoriteIDs == [])
     }
 
     // MARK: Message round-trips (app → daemon).
 
-    func testSetPluginAvailableRoundTrips() throws {
+    @Test func setPluginAvailableRoundTrips() throws {
         let msg = WSMessage.setPluginAvailable(.init(id: "bundle#2", available: false))
         let decoded = try JSONDecoder().decode(WSMessage.self, from: JSONEncoder().encode(msg))
         guard case let .setPluginAvailable(p) = decoded else {
-            return XCTFail("decoded to wrong case: \(decoded)")
+            Issue.record("decoded to wrong case: \(decoded)"); return
         }
-        XCTAssertEqual(p, PluginAvailabilityPayload(id: "bundle#2", available: false))
+        #expect(p == PluginAvailabilityPayload(id: "bundle#2", available: false))
     }
 
-    func testSetPluginFavoriteRoundTrips() throws {
+    @Test func setPluginFavoriteRoundTrips() throws {
         let msg = WSMessage.setPluginFavorite(.init(id: "bundle#2", favorite: true))
         let decoded = try JSONDecoder().decode(WSMessage.self, from: JSONEncoder().encode(msg))
         guard case let .setPluginFavorite(p) = decoded else {
-            return XCTFail("decoded to wrong case: \(decoded)")
+            Issue.record("decoded to wrong case: \(decoded)"); return
         }
-        XCTAssertEqual(p, PluginFavoritePayload(id: "bundle#2", favorite: true))
+        #expect(p == PluginFavoritePayload(id: "bundle#2", favorite: true))
     }
 }

@@ -39,10 +39,22 @@ let package = Package(
             name: "HydraModuleABI",
             path: "Sources/HydraModuleABI"
         ),
+        // Shared-memory transport ABI between the daemon and the out-of-process
+        // plugin host (crash isolation). Header-only C.
+        .target(
+            name: "HydraPluginHostABI",
+            path: "Sources/HydraPluginHostABI"
+        ),
+        // Out-of-process VST chain host: a plugin crash kills this, not hydrad.
+        .executableTarget(
+            name: "hydra-plugin-host",
+            dependencies: ["HydraVST", "HydraPluginHostABI"],
+            path: "Sources/hydra-plugin-host"
+        ),
         // Background daemon: all audio/network work lives here.
         .executableTarget(
             name: "hydrad",
-            dependencies: ["HydraCore", "HydraVST", "HydraNDIShim", "HydraModuleABI"],
+            dependencies: ["HydraCore", "HydraVST", "HydraNDIShim", "HydraModuleABI", "HydraPluginHostABI"],
             path: "Sources/hydrad",
             exclude: ["Info.plist"],
             linkerSettings: [

@@ -9,6 +9,7 @@
 // sources and delivers received audio, which we resample into the pool.
 
 import Foundation
+import Synchronization
 import HydraCore
 import HydraModuleABI
 
@@ -119,11 +120,10 @@ final class ModuleTx: EngineTap {
 
 // MARK: - ModuleManager
 
-final class ModuleManager {
+final class ModuleManager: @unchecked Sendable {
 
     private let store: MatrixStore
     private let queue = DispatchQueue(label: "hydra.modules")
-    private let deliverLock = NSLock()
 
     private var handles: [UnsafeMutableRawPointer] = []
     private var loaded: [UnsafePointer<HydraModule>] = []
@@ -132,7 +132,7 @@ final class ModuleManager {
     /// Discovered sources by id (snapshot from the modules).
     private var sources: [String: ModuleSourceInfo] = [:]
     private var subscribedIDs: Set<String> = []
-    private var receivers: [String: ModuleRx] = [:]   // guarded by deliverLock for reads on audio path
+    private let receivers = Mutex<[String: ModuleRx]>([:])   // guarded by Mutex for reads on audio path
 
     /// Sinks (TX) the modules expose, and their output taps.
     private var sinks: [String: ModuleSinkInfo] = [:]
@@ -232,9 +232,7 @@ final class ModuleManager {
 
     func hostDeliver(sourceID: String, data: UnsafePointer<Float>,
                      channels: Int, frames: Int, rate: Double) {
-        deliverLock.lock()
-        let rx = receivers[sourceID]
-        deliverLock.unlock()
+        let rx = receivers.withLock { $0[sourceID] }
         rx?.deliver(data, channels: channels, frames: frames, rate: rate)
     }
 
@@ -291,23 +289,23 @@ final class ModuleManager {
             .map(BackplaneProbe.nominalSampleRate) ?? Hydra.defaultSampleRate
         let wanted = subscribedIDs.intersection(sources.keys).union(extSubscribed)
 
-        deliverLock.lock()
-        for (id, rx) in receivers where !wanted.contains(id) {
-            receivers.removeValue(forKey: id)
-            _ = rx   // dropped; deinit frees staging
-        }
-        for id in wanted where receivers[id] == nil {
-            let rx = ModuleRx(sourceID: id, engineRate: engineRate)
-            rx.onReady = { [weak self] _ in
-                guard let self else { return }
-                self.queue.async {
-                    self.registerReadyLocked()
-                    self.broadcastLocked()
-                }
+        receivers.withLock { dict in
+            for (id, rx) in dict where !wanted.contains(id) {
+                dict.removeValue(forKey: id)
+                _ = rx   // dropped; deinit frees staging
             }
-            receivers[id] = rx
+            for id in wanted where dict[id] == nil {
+                let rx = ModuleRx(sourceID: id, engineRate: engineRate)
+                rx.onReady = { [weak self] _ in
+                    guard let self else { return }
+                    self.queue.async {
+                        self.registerReadyLocked()
+                        self.broadcastLocked()
+                    }
+                }
+                dict[id] = rx
+            }
         }
-        deliverLock.unlock()
 
         // Re-poll each module's SINK (TX) list and reconcile output taps.
         var freshSinks: [String: ModuleSinkInfo] = [:]
@@ -343,9 +341,9 @@ final class ModuleManager {
     }
 
     private func registerReadyLocked() {
-        deliverLock.lock()
-        let ready = receivers.values.filter { $0.inRing != nil }
-        deliverLock.unlock()
+        let ready = receivers.withLock { dict in
+            dict.values.filter { $0.inRing != nil }
+        }
         var taps: [EngineTap] = ready.map { $0 as EngineTap }
         taps.append(contentsOf: txTaps.values.map { $0 as EngineTap })
         taps.sort { $0.nodeID < $1.nodeID }
@@ -359,7 +357,7 @@ final class ModuleManager {
         }
         let srcs = sources.keys.sorted().map { id -> ModuleSourceInfo in
             var s = sources[id]!
-            deliverLock.lock(); let ch = receivers[id]?.inChannels; deliverLock.unlock()
+            let ch = receivers.withLock { $0[id]?.inChannels }
             if let ch, ch > 0 { s.channels = ch }
             // Keep externally-driven subscriptions (e.g. Dante RX from the Controller,
             // already set in `sources`) — only OR in the app's own subscriptions.

@@ -107,7 +107,7 @@ private struct AxisLayout {
 }
 
 struct GridView: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     @Binding var selection: GridSelection?
     @Binding var channelFocus: ChannelFocus?
 
@@ -679,16 +679,14 @@ struct GridView: View {
 
     private func connIDs(source entry: GridEntry) -> [String] {
         guard entry.nodeID != Hydra.backplaneNodeID else { return [] }
-        return client.connections.filter {
-            $0.source.nodeID == entry.nodeID && $0.source.channelIndex == entry.channel
-        }.map(\.id)
+        let key = "\(entry.nodeID):\(entry.channel)"
+        return client.connectionIndex.bySource[key] ?? []
     }
 
     private func connIDs(destination entry: GridEntry) -> [String] {
         guard entry.nodeID != Hydra.backplaneNodeID else { return [] }
-        return client.connections.filter {
-            $0.destination.nodeID == entry.nodeID && $0.destination.channelIndex == entry.channel
-        }.map(\.id)
+        let key = "\(entry.nodeID):\(entry.channel)"
+        return client.connectionIndex.byDestination[key] ?? []
     }
 
     /// One mark per channel lane (position + what to read for its signal state).
@@ -800,8 +798,8 @@ private struct SignalMark {
 /// per-channel SignalDot views, which churned the SwiftUI AttributeGraph. A meter
 /// tick now re-renders one node and redraws one (thin) Canvas.
 private struct SignalStripCanvas: View {
-    @EnvironmentObject private var signals: SignalFlags
-    @EnvironmentObject private var meters:  ConnMeters
+    @Environment(SignalFlags.self) private var signals
+    @Environment(ConnMeters.self) private var meters
     let marks: [SignalMark]
     let output: Bool
     let axis: Axis

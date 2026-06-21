@@ -59,7 +59,12 @@ public enum OSCParser {
 
     // MARK: Internals
 
-    private static func parseBundle(_ bytes: [UInt8]) -> [OSCMessage] {
+    /// Guards against a crafted datagram of deeply nested bundles overflowing
+    /// the stack. OSC has no legitimate need for deep nesting.
+    private static let maxBundleDepth = 8
+
+    private static func parseBundle(_ bytes: [UInt8], depth: Int = 0) -> [OSCMessage] {
+        guard depth < maxBundleDepth else { return [] }
         var messages: [OSCMessage] = []
         var offset = 16 // "#bundle\0" (8) + timetag (8)
         while offset + 4 <= bytes.count {
@@ -69,7 +74,7 @@ public enum OSCParser {
             guard size > 0, offset + size <= bytes.count else { break }
             let element = Array(bytes[offset ..< offset + size])
             if element.starts(with: Array("#bundle\0".utf8)) {
-                messages.append(contentsOf: parseBundle(element))
+                messages.append(contentsOf: parseBundle(element, depth: depth + 1))
             } else if let message = parseMessage(element) {
                 messages.append(message)
             }

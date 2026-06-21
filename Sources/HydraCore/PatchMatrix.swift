@@ -54,3 +54,23 @@ public enum Gain {
         pow(10, db / 20)
     }
 }
+
+// MARK: - ConnectionIndex
+
+/// Fast lookup indices for a set of connections.
+public struct ConnectionIndex: Sendable, Equatable {
+    public private(set) var bySource: [String: [String]] = [:]
+    public private(set) var byDestination: [String: [String]] = [:]
+    public private(set) var byID: [String: Connection] = [:]
+
+    public init(connections: [Connection]) {
+        byID.reserveCapacity(connections.count)
+        for c in connections {
+            byID[c.id] = c
+            let srcKey = "\(c.source.nodeID):\(c.source.channelIndex)"
+            let dstKey = "\(c.destination.nodeID):\(c.destination.channelIndex)"
+            bySource[srcKey, default: []].append(c.id)
+            byDestination[dstKey, default: []].append(c.id)
+        }
+    }
+}

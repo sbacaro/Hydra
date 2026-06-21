@@ -9,7 +9,7 @@ struct StripMeters {
 }
 
 struct StripGridView: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     
     let columns = [
         GridItem(.adaptive(minimum: 260, maximum: 320), spacing: 16, alignment: .top)
@@ -53,7 +53,7 @@ struct StripGridView: View {
 }
 
 struct StripCardView: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     let strip: StripInfo
     @State private var showInsertPicker = false
     @State private var isHovering = false
@@ -203,7 +203,7 @@ struct StripCardView: View {
 }
 
 struct InsertRowView: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     let strip: StripInfo
     let index: Int
     @State private var isHovering = false
@@ -240,6 +240,9 @@ struct InsertRowView: View {
                 
                 Button(action: {
                     var updated = strip
+                    // Guard: a daemon echo may have shrunk the array between
+                    // render and tap (ForEach uses indices as identity).
+                    guard updated.inserts.indices.contains(index) else { return }
                     updated.inserts.remove(at: index)
                     client.setStrip(updated)
                 }) {

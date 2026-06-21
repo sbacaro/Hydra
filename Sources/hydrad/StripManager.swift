@@ -30,6 +30,9 @@ final class ChainTap: EngineTap {
 
     /// Plugin instances aligned with `info.plugins` (nil = failed to load).
     private var instances: [UnsafeMutableRawPointer?] = []
+    /// Opt-in: when set, the chain runs in a separate process (crash isolation)
+    /// and `instances` stays empty. Enable with HYDRA_REMOTE_PLUGINS=1.
+    private let remoteHost: RemotePluginHost?
     private var inPeakScratch: Float = 0
     private var outPeakScratch: Float = 0
     /// Deinterleaved ping-pong buffers (2 × channel pointers).
@@ -79,6 +82,28 @@ final class ChainTap: EngineTap {
             argB[ch] = bufB[ch]
         }
 
+        // Out-of-process hosting is per-strip (info.isolated, on by default): a
+        // crashing plugin then takes down only its host, not the daemon. The
+        // local `instances` array stays empty and render() delegates to the
+        // remote host. HYDRA_REMOTE_PLUGINS=0 is a global kill-switch (force the
+        // legacy in-process path everywhere). Falls back to in-process if the
+        // host binary can't be located.
+        if info.isolated,
+           ProcessInfo.processInfo.environment["HYDRA_REMOTE_PLUGINS"] != "0",
+           !info.plugins.isEmpty,
+           let hostURL = RemotePluginHost.defaultHostURL(),
+           let host = RemotePluginHost(channels: channels,
+                                       maxFrames: Hydra.maxIOFrames,
+                                       sampleRate: sampleRate,
+                                       plugins: info.plugins.map(\.id),
+                                       titles: info.plugins.map { "\($0.name) — \(info.name)" },
+                                       hostURL: hostURL) {
+            remoteHost = host
+            log("Strip \"\(info.name)\": hosting \(info.plugins.count) plugin(s) out-of-process (crash-isolated)")
+            return
+        }
+        remoteHost = nil
+
         for plugin in info.plugins {
             let parts = plugin.id.split(separator: "#")
             guard parts.count == 2, let classIndex = Int32(parts[1]) else {
@@ -104,7 +129,17 @@ final class ChainTap: EngineTap {
         instances.indices.contains(index) ? instances[index] : nil
     }
 
+    /// If this chain is hosted out-of-process, ask the host to open plugin
+    /// `index`'s editor window. Returns true when handled remotely.
+    func openEditorRemotely(index: Int) -> Bool {
+        guard let remoteHost else { return false }
+        remoteHost.openEditor(index: index)
+        return true
+    }
+
     deinit {
+        // Out-of-process chain: tear down the child + shared memory.
+        remoteHost?.shutdown()
         // Waves (and some other) VST3 plugins call NSView/NSWindow APIs during
         // destruction (DisposeSystemWindow). Must run on the main thread.
         // We may arrive here from hydra.matrix.control or hydra.strips — both
@@ -117,9 +152,14 @@ final class ChainTap: EngineTap {
                 hydra_vst_destroy_instance(instance)
             }
         } else {
-            DispatchQueue.main.sync {
-                for instance in toDestroy {
-                    hydra_vst_destroy_instance(instance)
+            // Raw pointers aren't Sendable; pass them across to main as integer
+            // bit patterns (which are) and rebuild on the other side.
+            let addrs = toDestroy.map { UInt(bitPattern: $0) }
+            DispatchQueue.main.async {
+                for addr in addrs {
+                    if let p = UnsafeMutableRawPointer(bitPattern: addr) {
+                        hydra_vst_destroy_instance(p)
+                    }
                 }
             }
         }
@@ -140,6 +180,15 @@ final class ChainTap: EngineTap {
 
         vDSP_maxmgv(input, 1, &inPeakScratch, vDSP_Length(n * channels))
         inPeak = inPeakScratch
+
+        // Out-of-process chain (opt-in): RT-safe, never blocks, passes dry on a
+        // slow/crashed host. A plugin crash can't reach this thread.
+        if let remoteHost {
+            remoteHost.process(input: input, output: output, frames: n)
+            vDSP_maxmgv(output, 1, &outPeakScratch, vDSP_Length(n * channels))
+            outPeak = outPeakScratch
+            return
+        }
 
         guard loadedCount > 0 else {
             memcpy(output, input, n * channels * MemoryLayout<Float>.size)
@@ -163,9 +212,15 @@ final class ChainTap: EngineTap {
             }
         }
 
-        for frame in 0..<n {
-            for ch in 0..<channels {
-                let channelData = source[ch]!
+        // A misbehaving VST3 may substitute (or null) the channel buffer pointers
+        // it was handed. Never force-unwrap on the audio thread: fall back to
+        // silence for any channel the plugin left nil instead of trapping.
+        for ch in 0..<channels {
+            guard let channelData = source[ch] else {
+                for frame in 0..<n { output[frame * channels + ch] = 0 }
+                continue
+            }
+            for frame in 0..<n {
                 output[frame * channels + ch] = channelData[frame]
             }
         }
@@ -185,7 +240,7 @@ struct StripRoute {
     let trim: Float
 }
 
-final class StripManager {
+final class StripManager: @unchecked Sendable {
 
     private let store: MatrixStore
     private let queue = DispatchQueue(label: "hydra.strips")
@@ -396,23 +451,33 @@ final class StripManager {
         }
     }
 
-    /// Opens the editor window of a loaded insert.
+    /// Opens the editor window of a loaded insert (in-process, or routed to the
+    /// out-of-process host when the chain runs remotely).
+    enum EditorTarget { case remote, local(UnsafeMutableRawPointer, String), none }
     func openEditor(stripID: UUID, index: Int) {
-        let handleAndTitle: (UnsafeMutableRawPointer, String)? = queue.sync {
-            guard let tap = active[stripID],
-                  let handle = tap.instanceHandle(at: index) else { return nil }
+        let target: EditorTarget = queue.sync {
+            guard let tap = active[stripID] else { return .none }
+            // Remote chain: the editor lives in the host process.
+            if tap.openEditorRemotely(index: index) { return .remote }
+            guard let handle = tap.instanceHandle(at: index) else { return .none }
             let title = tap.info.plugins.indices.contains(index)
                 ? "\(tap.info.plugins[index].name) — \(tap.info.name)"
                 : tap.info.name
-            return (handle, title)
+            return .local(handle, title)
         }
-        guard let (handle, title) = handleAndTitle else {
+        switch target {
+        case .remote:
+            break // opened by the host process
+        case .none:
             log("VST editor: no loaded instance at \(stripID)#\(index)")
-            return
-        }
-        DispatchQueue.main.async {
-            if !hydra_vst_open_editor(handle, title) {
-                log("VST editor: plugin did not provide a view")
+        case .local(let handle, let title):
+            // Raw pointer isn't Sendable; cross to main as an integer bit pattern.
+            let handleAddr = UInt(bitPattern: handle)
+            DispatchQueue.main.async {
+                guard let h = UnsafeMutableRawPointer(bitPattern: handleAddr) else { return }
+                if !hydra_vst_open_editor(h, title) {
+                    log("VST editor: plugin did not provide a view")
+                }
             }
         }
     }
@@ -604,7 +669,8 @@ final class StripManager {
         for strip in strips.values where !strip.inserts.isEmpty {
             let chainInfo = VSTChainInfo(id: strip.id,
                                          name: "\(strip.nodeID):\(strip.channelIndex + 1)",
-                                         plugins: strip.inserts)
+                                         plugins: strip.inserts,
+                                         isolated: strip.isolated)
             let tap: ChainTap
             if let existing = active[strip.id], existing.info == chainInfo {
                 tap = existing

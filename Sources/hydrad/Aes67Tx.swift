@@ -8,6 +8,7 @@
 // in Dante Controller as an AES67 flow" part) is fully functional.
 
 import Foundation
+import Synchronization
 import Network
 import HydraCore
 
@@ -26,7 +27,7 @@ func localIPv4Address() -> String {
             var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
             if getnameinfo(sa, socklen_t(sa.pointee.sa_len), &host, socklen_t(host.count),
                            nil, 0, NI_NUMERICHOST) == 0 {
-                address = String(cString: host)
+                address = host.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
                 break
             }
         }
@@ -37,7 +38,7 @@ func localIPv4Address() -> String {
 
 // MARK: - Aes67Tx: one transmitting interface
 
-final class Aes67Tx {
+final class Aes67Tx: @unchecked Sendable {
     let info: Aes67TxInfo
     let tap: PoolTxTap
 
@@ -46,8 +47,9 @@ final class Aes67Tx {
     private var sap: NWConnection?
     private var thread: Thread?
     private var sapTimer: DispatchSourceTimer?
-    private var running = true
+    private let running = Atomic<Bool>(true)
     private let queue = DispatchQueue(label: "hydra.aes67.tx")
+    private let threadExitSemaphore = DispatchSemaphore(value: 0)
     private let packetFrames = 48 // 1 ms @ 48 kHz (AES67 class A)
     private let pcm: UnsafeMutablePointer<Float>
     private var sequence: UInt16 = .random(in: 0...UInt16.max)
@@ -113,7 +115,10 @@ final class Aes67Tx {
 
     func stop() {
         sendSAP(deletion: true)
-        running = false
+        if running.load(ordering: .relaxed) {
+            running.store(false, ordering: .relaxed)
+            threadExitSemaphore.wait()
+        }
         thread = nil
         sapTimer?.cancel()
         sapTimer = nil
@@ -130,7 +135,7 @@ final class Aes67Tx {
         let channels = info.channels
         let interval = Double(packetFrames) / sampleRate
         var next = Date()
-        while running {
+        while running.load(ordering: .relaxed) {
             tap.ring.readResampled(into: pcm, frames: packetFrames)
 
             // AES67 media clock: when the PTP slave is locked, RTP
@@ -177,6 +182,7 @@ final class Aes67Tx {
                 next = Date() // fell badly behind (VM hiccup): resync
             }
         }
+        threadExitSemaphore.signal()
     }
 
     // MARK: SAP/SDP

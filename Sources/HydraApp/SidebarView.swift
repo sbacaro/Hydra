@@ -22,7 +22,7 @@ enum SidebarTab: String, CaseIterable {
 }
 
 struct SidebarView: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     @Binding var tab: SidebarTab
     @State private var showAddInterface = false
     @AppStorage("experimentalModules") private var experimentalModules = false
@@ -387,7 +387,7 @@ struct SidebarView: View {
                 }
             }
             Spacer(minLength: 6)
-            InfoPopoverButton { DeviceDetailView(device: device).environmentObject(client) }
+            InfoPopoverButton { DeviceDetailView(device: device).environment(client) }
             Toggle("", isOn: Binding(
                 get: { device.used },
                 set: { client.setDeviceUse(uid: device.uid, used: $0) }))
@@ -424,7 +424,7 @@ struct SidebarView: View {
                 .foregroundStyle(app.isPlaying ? .primary : .secondary)
                 .lineLimit(1)
             Spacer(minLength: 6)
-            InfoPopoverButton { AppCaptureDetailView(app: app).environmentObject(client) }
+            InfoPopoverButton { AppCaptureDetailView(app: app).environment(client) }
             Toggle("", isOn: Binding(
                 get: { app.captured },
                 set: { client.setAppCapture(pid: app.pid, captured: $0) }))
@@ -448,7 +448,7 @@ struct SidebarView: View {
                 .foregroundStyle(stream.subscribed ? .primary : .secondary)
                 .lineLimit(1)
             Spacer(minLength: 6)
-            InfoPopoverButton { StreamDetailView(stream: stream).environmentObject(client) }
+            InfoPopoverButton { StreamDetailView(stream: stream).environment(client) }
             Toggle("", isOn: Binding(
                 get: { stream.subscribed },
                 set: { client.subscribeStream(id: stream.id, subscribed: $0) }))
@@ -573,7 +573,7 @@ private func detailMono(_ label: String, _ value: String) -> some View {
 // MARK: - Device detail
 
 private struct DeviceDetailView: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     let device: PhysicalDeviceInfo
 
     var body: some View {
@@ -607,7 +607,7 @@ private struct DeviceDetailView: View {
 // MARK: - App capture detail
 
 private struct AppCaptureDetailView: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     let app: AppInfo
 
     var body: some View {
@@ -638,7 +638,7 @@ private struct AppCaptureDetailView: View {
 // MARK: - AES67 stream detail
 
 private struct StreamDetailView: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     let stream: Aes67Stream
 
     var body: some View {

@@ -106,7 +106,7 @@ final class MulticastReceiver {
             var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
             if getnameinfo(sa, socklen_t(sa.pointee.sa_len), &host, socklen_t(host.count),
                            nil, 0, NI_NUMERICHOST) == 0 {
-                result.append(String(cString: host))
+                result.append(host.withUnsafeBufferPointer { String(cString: $0.baseAddress!) })
             }
         }
         return result
@@ -196,6 +196,8 @@ final class Aes67Rx: EngineTap {
 
         let payloadBytes = bytes.count - offset
         let frameBytes = bytesPerSample * inChannels
+        // Guard against a malformed/0-channel stream causing divide-by-zero.
+        guard frameBytes > 0 else { return }
         let frames = min(payloadBytes / frameBytes, Hydra.maxIOFrames)
         guard frames > 0, let ring = inRing else { return }
 
@@ -220,7 +222,7 @@ final class Aes67Rx: EngineTap {
 
 // MARK: - Aes67Manager
 
-final class Aes67Manager {
+final class Aes67Manager: @unchecked Sendable {
 
     private let store: MatrixStore
     private let queue = DispatchQueue(label: "hydra.aes67")
@@ -289,7 +291,7 @@ final class Aes67Manager {
             parameters.includePeerToPeer = false
             let browser = NWBrowser(for: .bonjour(type: type, domain: nil), using: parameters)
             browser.browseResultsChangedHandler = { [weak self] results, _ in
-                self?.queue.async {
+                self?.queue.async { [weak self] in
                     self?.updatePresence(results)
                 }
             }

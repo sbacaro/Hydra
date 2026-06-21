@@ -16,12 +16,13 @@
 // output slice each cycle; a sender thread drains it in ~10 ms chunks.
 
 import Foundation
+import Synchronization
 import HydraCore
 import HydraNDIShim
 
 // MARK: - NdiRx: one subscribed source
 
-final class NdiRx: EngineTap {
+final class NdiRx: EngineTap, @unchecked Sendable {
     let nodeID: String
     let sourceID: String
     // EngineTap — populated once the format is known (before registration).
@@ -38,8 +39,9 @@ final class NdiRx: EngineTap {
     private let engineRate: Double
     private var recv: UnsafeMutableRawPointer?
     private var thread: Thread?
+    private let threadExitSemaphore = DispatchSemaphore(value: 0)
     private let scratch: UnsafeMutablePointer<Float>
-    private var running = true
+    private let running = Atomic<Bool>(true)
     private(set) var sampleRate: Double = 0
 
     init?(sourceID: String, name: String, url: String, engineRate: Double) {
@@ -68,14 +70,15 @@ final class NdiRx: EngineTap {
     }
 
     func stop() {
-        running = false
+        if running.load(ordering: .relaxed) {
+            running.store(false, ordering: .relaxed)
+            threadExitSemaphore.wait()
+        }
         thread = nil
-        // recv is destroyed by the capture thread on exit (it may be blocked
-        // inside capture with a timeout right now).
     }
 
     private func captureLoop(name: String) {
-        while running {
+        while running.load(ordering: .relaxed) {
             var channels: Int32 = 0
             var rate: Int32 = 0
             let frames = hndi_recv_audio(recv, scratch, Int32(Hydra.maxIOFrames),
@@ -101,18 +104,20 @@ final class NdiRx: EngineTap {
         }
         hndi_recv_destroy(recv)
         recv = nil
+        threadExitSemaphore.signal()
     }
 }
 
 // MARK: - NdiTx: one broadcasting virtual interface
 
-final class NdiTx {
+final class NdiTx: @unchecked Sendable {
     let interfaceID: UUID
     let tap: PoolTxTap
 
     private var send: UnsafeMutableRawPointer?
     private var thread: Thread?
-    private var running = true
+    private let threadExitSemaphore = DispatchSemaphore(value: 0)
+    private let running = Atomic<Bool>(true)
     private let chunk: Int
     private let sampleRate: Double
     private let buffer: UnsafeMutablePointer<Float>
@@ -145,7 +150,10 @@ final class NdiTx {
     }
 
     func stop() {
-        running = false
+        if running.load(ordering: .relaxed) {
+            running.store(false, ordering: .relaxed)
+            threadExitSemaphore.wait()
+        }
         thread = nil
     }
 
@@ -155,7 +163,7 @@ final class NdiTx {
         // stream; slower would overrun it.
         let interval = Double(chunk) / sampleRate
         var next = Date()
-        while running {
+        while running.load(ordering: .relaxed) {
             // The ring is fed by the RT thread on the engine clock; reading
             // resampled with equal rates just paces us to that clock.
             tap.ring.readResampled(into: buffer, frames: chunk)
@@ -171,12 +179,13 @@ final class NdiTx {
         hndi_send_destroy(send)
         send = nil
         log("NDI TX stopped: \"\(name)\"")
+        threadExitSemaphore.signal()
     }
 }
 
 // MARK: - NdiManager
 
-final class NdiManager {
+final class NdiManager: @unchecked Sendable {
 
     private let store: MatrixStore
     private let queue = DispatchQueue(label: "hydra.ndi")

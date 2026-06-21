@@ -2,7 +2,7 @@ import SwiftUI
 import HydraCore
 
 struct PluginPickerSheet: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     let strip: StripInfo
     @Environment(\.dismiss) var dismiss
     @State private var searchText = ""

@@ -59,7 +59,7 @@ struct SettingsView: View {
 // MARK: - General
 
 private struct GeneralSettingsPane: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     @EnvironmentObject private var updater: Updater
     @State private var loginToggleTick = 0
     @State private var loginError: String?
@@ -140,7 +140,7 @@ private struct GeneralSettingsPane: View {
 // MARK: - Audio
 
 private struct AudioSettingsPane: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     // Continuous control → wrap in the shared optimistic/echo-safe primitive so
     // dragging coalesces into debounced writes instead of one setConfig per step.
     @StateObject private var makeup = SyncedValue<Double>(0)
@@ -225,7 +225,7 @@ private struct AudioSettingsPane: View {
 // MARK: - Plug-ins
 
 private struct PluginsSettingsPane: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     @State private var search       = ""
     @State private var typeFilter   = ""
     @State private var vendorFilter = ""
@@ -282,45 +282,81 @@ private struct PluginsSettingsPane: View {
 
             Section {
                 // Filter bar
-                HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("Search", text: $search)
-                        .textFieldStyle(.plain)
-                        .frame(minWidth: 120)
+                HStack(spacing: 8) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        TextField("Search plugins…", text: $search)
+                            .textFieldStyle(.plain)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                    )
+                    .frame(minWidth: 160, maxWidth: 220)
+
                     Spacer()
+
                     Picker("", selection: $typeFilter) {
                         Text("All types").tag("")
                         ForEach(types, id: \.self) { Text($0).tag($0) }
                     }
                     .labelsHidden()
-                    .frame(width: 120)
+                    .frame(width: 110)
+
                     Picker("", selection: $vendorFilter) {
                         Text("All makers").tag("")
                         ForEach(vendors, id: \.self) { Text($0).tag($0) }
                     }
                     .labelsHidden()
-                    .frame(width: 150)
+                    .frame(width: 130)
                 }
                 .padding(.vertical, 2)
 
                 // Plug-in list
                 if filtered.isEmpty {
-                    Text(client.vst.available.isEmpty
-                         ? "No plug-ins scanned yet — press Scan."
-                         : "No plug-ins match the filters.")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 16)
+                    VStack {
+                        Spacer()
+                        ContentUnavailableView(
+                            client.vst.available.isEmpty ? "No plug-ins scanned" : "No results",
+                            systemImage: "puzzlepiece.extension",
+                            description: Text(client.vst.available.isEmpty
+                                              ? "Press Scan to discover VST3 plug-ins."
+                                              : "Try checking your spelling or changing the filters.")
+                        )
+                        .labelStyle(.titleAndIcon)
+                        .controlSize(.small)
+                        Spacer()
+                    }
+                    .frame(height: 240)
+                    .frame(maxWidth: .infinity)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                    )
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             ForEach(filtered) { plugin in
                                 PluginRow(plugin: plugin)
-                                Divider()
+                                if plugin.id != filtered.last?.id {
+                                    Divider()
+                                }
                             }
                         }
                     }
                     .frame(height: 240)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                    )
                 }
             } header: {
                 Text("Available Plug-ins")
@@ -370,7 +406,7 @@ private struct PluginsSettingsPane: View {
 }
 
 private struct PluginRow: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     let plugin: VSTPlugin
 
     var body: some View {
@@ -425,7 +461,7 @@ private struct PluginRow: View {
 // MARK: - Recording
 
 private struct RecordingSettingsPane: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
 
     var body: some View {
         Form {
@@ -482,7 +518,7 @@ private struct RecordingSettingsPane: View {
 // MARK: - Control
 
 private struct ControlSettingsPane: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
 
     var body: some View {
         Form {
@@ -501,6 +537,7 @@ private struct ControlSettingsPane: View {
                             get: { client.config.oscPort },
                             set: { value in client.updateConfig { $0.oscPort = max(1024, min(65535, value)) } }),
                                   format: .number.grouping(.never))
+                            .textFieldStyle(.roundedBorder)
                             .frame(width: 80)
                             .multilineTextAlignment(.trailing)
                             .monospacedDigit()
@@ -519,7 +556,7 @@ private struct ControlSettingsPane: View {
 // MARK: - Advanced
 
 private struct AdvancedSettingsPane: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     @State private var confirmReset   = false
     @State private var exportResult: String?
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
@@ -577,8 +614,16 @@ private struct AdvancedSettingsPane: View {
                     Text(client.status?.backplaneDeviceName ?? "not installed")
                         .foregroundStyle(.secondary)
                 }
+                LabeledContent("Logs") {
+                    Button("Export Diagnostics…") {
+                        Diagnostics.export(statusSummary: diagnosticsStatusSummary())
+                    }
+                }
+                .help("Collects the last 2h of app + daemon logs, environment and status into one file for support.")
             } header: {
                 Text("Diagnostics")
+            } footer: {
+                Text("Export Diagnostics gathers recent logs from both the app and the daemon. Attach the file when reporting an issue.")
             }
 
             Section {
@@ -626,6 +671,23 @@ private struct AdvancedSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// Human-readable snapshot of the live daemon state, embedded at the top of
+    /// an exported diagnostics file.
+    private func diagnosticsStatusSummary() -> String {
+        let s = client.status
+        return """
+        Connection:  \(client.connectionState)
+        Daemon:      \(s?.daemonVersion ?? "offline") @ \(Hydra.daemonHost):\(Hydra.daemonPort)
+        Soundcard:   \(s?.backplaneDeviceName ?? "not installed")
+        Engine:      \(s?.engineRunning == true ? "running" : "stopped")
+        CPU load:    \(s.map { String(format: "%.0f%%", $0.cpuLoad * 100) } ?? "—")
+        XRUNs:       \(s?.xruns ?? 0)
+        Connections: \(client.connections.count)
+        Interfaces:  \(client.interfaces.count)
+        Strips:      \(client.strips.count)
+        """
     }
 
     // MARK: Export

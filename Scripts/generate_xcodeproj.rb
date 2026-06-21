@@ -24,11 +24,15 @@ require 'xcodeproj'
 ROOT       = File.expand_path('..', __dir__)
 PROJ_PATH  = File.join(ROOT, 'Hydra.xcodeproj')
 DEPLOY     = '26.0'
-MARKETING  = '0.19.1'
-BUILD_NUM  = '0.19.1'
+MARKETING  = '0.20.0'
+BUILD_NUM  = '0.20.0'
 SRC_EXT    = %w[.swift .c .m .mm .cpp .cc].freeze
 
 project = Xcodeproj::Project.new(PROJ_PATH)
+
+# Xcode 16+ synchronized folder groups (PBXFileSystemSynchronizedRootGroup)
+# require the modern pbxproj object format. Bump from the gem's default (46).
+project.instance_variable_set(:@object_version, '77')
 
 # Localization: English is the development (base) language; pt-BR ships as a
 # translation. Strings live in Sources/HydraApp/Localizable.xcstrings (String
@@ -79,6 +83,33 @@ def add_dir(project, target, rel_dir, patterns)
   refs
 end
 
+# Xcode 26 synchronized folder group: the whole <rel_dir> is tied to <target>
+# and Xcode assigns each file to the right phase (Swift→Sources, assets/strings→
+# Resources) automatically. Adding a source file no longer needs a regenerate.
+# `exclude` lists paths (relative to rel_dir) kept OUT of auto-membership — e.g.
+# the Info.plist (referenced via INFOPLIST_FILE) or a LaunchAgent plist that is
+# only wanted in a bespoke Copy Files phase, not Copy Bundle Resources.
+def sync_dir(project, target, rel_dir, exclude: [], public_headers: [])
+  group = project.new(Xcodeproj::Project::Object::PBXFileSystemSynchronizedRootGroup)
+  group.source_tree = '<group>'
+  group.path = rel_dir
+  project.main_group.children << group
+
+  if !exclude.empty? || !public_headers.empty?
+    ex = project.new(Xcodeproj::Project::Object::PBXFileSystemSynchronizedBuildFileExceptionSet)
+    ex.target = target
+    ex.membership_exceptions = exclude unless exclude.empty?
+    # Promote the umbrella header(s) to Public so the modulemap exports them.
+    ex.public_headers = public_headers unless public_headers.empty?
+    group.exceptions ||= []
+    group.exceptions << ex
+  end
+
+  target.file_system_synchronized_groups ||= []
+  target.file_system_synchronized_groups << group
+  group
+end
+
 def each_config(target)
   target.build_configurations.each { |c| yield c, c.build_settings, (c.name == 'Release') }
 end
@@ -87,7 +118,14 @@ def common!(target, bundle_id, extra = {})
   each_config(target) do |cfg, s, release|
     s['PRODUCT_BUNDLE_IDENTIFIER'] = bundle_id
     s['MACOSX_DEPLOYMENT_TARGET']  = DEPLOY
-    s['SWIFT_VERSION']             = '5.0'
+    # Swift 6.2 — stage 2: full Swift 6 language mode. Data-race safety is now
+    # enforced (former warnings become errors). Approachable Concurrency keeps the
+    # 6.2 ergonomic features on; default actor isolation is per-target below
+    # (MainActor for the UI app; nonisolated for the daemon/host, which run
+    # concurrent background + real-time work).
+    s['SWIFT_VERSION']                  = '6.0'
+    s['SWIFT_APPROACHABLE_CONCURRENCY'] = 'YES'
+    s['SWIFT_STRICT_CONCURRENCY']       = 'complete'
     s['MARKETING_VERSION']         = MARKETING
     s['CURRENT_PROJECT_VERSION']   = BUILD_NUM
     s['ALWAYS_SEARCH_USER_PATHS']  = 'NO'
@@ -124,17 +162,17 @@ end
 # ---------------------------------------------------------------------------
 
 core = project.new_target(:framework, 'HydraCore', :osx, DEPLOY, nil, :swift)
-add_dir(project, core, 'Sources/HydraCore', %w[*.swift])
+sync_dir(project, core, 'Sources/HydraCore')
 common!(core, 'audio.hydra.core', 'DEFINES_MODULE' => 'YES')
 
 # --- C / C++ shims: framework + explicit modulemap so Swift can `import` them.
 def c_framework(project, name, dir, public_header, modulemap, bundle_id, extra = {})
   fw = project.new_target(:framework, name, :osx, DEPLOY, nil, :c)
-  refs = add_dir(project, fw, dir, %w[*.c *.m *.mm *.cpp])
-  hdrs = add_dir(project, fw, "#{dir}/include", %w[*.h])
-  # publish the umbrella header referenced by the modulemap
-  ph = hdrs[public_header]
-  fw.headers_build_phase.add_file_reference(ph, true).settings = { 'ATTRIBUTES' => ['Public'] } if ph
+  # Synchronized folder group: sources compile automatically; the umbrella
+  # header (include/<public_header>) is promoted to Public so the modulemap
+  # exports it. The module.modulemap itself is referenced via MODULEMAP_FILE
+  # (not compiled). Adding a new source no longer needs a regenerate.
+  sync_dir(project, fw, dir, public_headers: ["include/#{public_header}"])
   common!(fw, bundle_id, {
     'DEFINES_MODULE'            => 'YES',
     'MODULEMAP_FILE'            => "#{dir}/#{modulemap}",
@@ -148,6 +186,10 @@ ndishim = c_framework(project, 'HydraNDIShim', 'Sources/HydraNDIShim',
 
 moduleabi = c_framework(project, 'HydraModuleABI', 'Sources/HydraModuleABI',
                         'hydra_module.h', 'module.modulemap', 'audio.hydra.moduleabi')
+
+# Shared-memory transport between the daemon and the out-of-process plugin host.
+pluginhostabi = c_framework(project, 'HydraPluginHostABI', 'Sources/HydraPluginHostABI',
+                            'hydra_plugin_shm.h', 'module.modulemap', 'audio.hydra.pluginhostabi')
 
 vst = c_framework(project, 'HydraVST', 'Sources/HydraVST',
                   'hydra_vst.h', 'module.modulemap', 'audio.hydra.vst', {
@@ -183,7 +225,7 @@ vst.add_dependency(fetch_target)
 RPATH = '@executable_path/../Frameworks @loader_path/../Frameworks'
 
 daemon = project.new_target(:application, 'hydrad', :osx, DEPLOY, nil, :swift)
-add_dir(project, daemon, 'Sources/hydrad', %w[*.swift])
+sync_dir(project, daemon, 'Sources/hydrad', exclude: ['Info.plist'])
 common!(daemon, 'audio.hydra.daemon', {
   'INFOPLIST_FILE'         => 'Sources/hydrad/Info.plist',
   'INFOPLIST_KEY_LSUIElement' => 'YES',
@@ -195,10 +237,30 @@ common!(daemon, 'audio.hydra.daemon', {
   'LD_RUNPATH_SEARCH_PATHS'=> "$(inherited) #{RPATH}",
   'PRODUCT_NAME'           => 'hydrad'
 })
-link_and_embed(daemon, [core, vst, ndishim, moduleabi])
+link_and_embed(daemon, [core, vst, ndishim, moduleabi, pluginhostabi])
+
+# Out-of-process VST chain host (crash isolation). Built as an .app so a later
+# iteration can host plugin editor GUIs (AppKit) in the same crashable process.
+# Faceless (LSUIElement). The daemon launches it and talks to it over shared
+# memory (HydraPluginHostABI); a plugin crash kills THIS, not hydrad.
+pluginhost = project.new_target(:application, 'hydra-plugin-host', :osx, DEPLOY, nil, :swift)
+sync_dir(project, pluginhost, 'Sources/hydra-plugin-host')
+common!(pluginhost, 'audio.hydra.pluginhost', {
+  'INFOPLIST_KEY_LSUIElement' => 'YES',
+  'CODE_SIGN_STYLE'        => 'Manual',
+  'CODE_SIGN_IDENTITY'     => SIGN_ID,
+  'ENABLE_HARDENED_RUNTIME'=> 'YES',
+  'LD_RUNPATH_SEARCH_PATHS'=> "$(inherited) #{RPATH}",
+  'PRODUCT_NAME'           => 'hydra-plugin-host'
+})
+link_and_embed(pluginhost, [vst, pluginhostabi])
 
 app = project.new_target(:application, 'HydraApp', :osx, DEPLOY, nil, :swift)
-add_dir(project, app, 'Sources/HydraApp', %w[*.swift])
+# Exclude files that must NOT become Copy-Bundle-Resources: the Info.plist
+# (wired via INFOPLIST_FILE) and the LaunchAgent plist (embedded into
+# Contents/Library/LaunchAgents by a bespoke Copy Files phase below).
+sync_dir(project, app, 'Sources/HydraApp',
+         exclude: ['Info.plist', 'LaunchAgents/audio.hydra.daemon.plist'])
 common!(app, 'audio.hydra.app', {
   'INFOPLIST_FILE'          => 'Sources/HydraApp/Info.plist',
   'GENERATE_INFOPLIST_FILE' => 'NO',
@@ -211,7 +273,11 @@ common!(app, 'audio.hydra.app', {
   # "HydraApp". The bundle id stays audio.hydra.app.
   'PRODUCT_NAME'            => 'Hydra',
   'ASSETCATALOG_COMPILER_APPICON_NAME' => 'AppIcon',
-  'SWIFT_EMIT_LOC_STRINGS'  => 'YES'
+  'SWIFT_EMIT_LOC_STRINGS'  => 'YES',
+  # UI target: main-actor-by-default (Swift 6.2). Most SwiftUI code is already
+  # main-actor; this removes the @MainActor boilerplate and matches new-project
+  # defaults. The daemon/host keep the nonisolated default (concurrent work).
+  'SWIFT_DEFAULT_ACTOR_ISOLATION' => 'MainActor'
 })
 link_and_embed(app, [core])
 
@@ -241,18 +307,17 @@ end
 app_assets = project.new_file('Media.xcassets')
 app.resources_build_phase.add_file_reference(app_assets, true)
 
-# Localizable String Catalog (English base + pt-BR). Xcode compiles it and
-# extracts new Text() strings into it on build.
-app_strings = project.new_file('Sources/HydraApp/Localizable.xcstrings')
-app.resources_build_phase.add_file_reference(app_strings, true)
+# Localizable.xcstrings (String Catalog) lives in Sources/HydraApp and is now
+# picked up automatically by the synchronized folder group above — no explicit
+# reference needed (adding one would double-bundle it).
 
 # ---------------------------------------------------------------------------
 # backplane driver (.driver — AudioServerPlugIn bundle)
 # ---------------------------------------------------------------------------
 driver = project.new_target(:bundle, 'HydraVirtualSoundcard', :osx, '11.0', nil, :c)
-add_dir(project, driver, 'Backplane/Driver', %w[*.c])
-icns = add_dir(project, driver, 'Backplane/Driver', %w[*.icns])
-driver.resources_build_phase.add_file_reference(icns['Hydra.icns'], true) if icns['Hydra.icns']
+# Synchronized: Hydra.c compiles, Hydra.icns is bundled automatically; Hydra.plist
+# is the INFOPLIST_FILE so it must stay out of Copy Bundle Resources.
+sync_dir(project, driver, 'Backplane/Driver', exclude: ['Hydra.plist'])
 driver.add_system_framework(%w[CoreAudio CoreFoundation Accelerate])
 each_config(driver) do |cfg, s, release|
   s['PRODUCT_BUNDLE_IDENTIFIER'] = 'audio.hydra.virtualsoundcard'
@@ -307,11 +372,22 @@ embed_agent.dst_path = 'Contents/Library/LaunchAgents'
 agent_plist = project.new_file('Sources/HydraApp/LaunchAgents/audio.hydra.daemon.plist')
 embed_agent.add_file_reference(agent_plist, true)
 
+# Embed the out-of-process plugin host alongside the daemon in Helpers so the
+# daemon can launch it (RemotePluginHost.defaultHostURL locates it there). The
+# daemon also depends on it so it builds first and is code-signed on copy.
+app.add_dependency(pluginhost)
+daemon.add_dependency(pluginhost)
+embed_pluginhost = app.new_copy_files_build_phase('Embed Plugin Host')
+embed_pluginhost.symbol_dst_subfolder_spec = :wrapper
+embed_pluginhost.dst_path = 'Contents/Library/Helpers'
+pluginhost_bf = embed_pluginhost.add_file_reference(pluginhost.product_reference, true)
+pluginhost_bf.settings = { 'ATTRIBUTES' => ['CodeSignOnCopy'] }
+
 # ---------------------------------------------------------------------------
 # tests
 # ---------------------------------------------------------------------------
 tests = project.new_target(:unit_test_bundle, 'HydraCoreTests', :osx, DEPLOY, nil, :swift)
-add_dir(project, tests, 'Tests/HydraCoreTests', %w[*.swift])
+sync_dir(project, tests, 'Tests/HydraCoreTests')
 tests.add_dependency(core)
 tests.frameworks_build_phase.add_file_reference(core.product_reference, true)
 common!(tests, 'audio.hydra.core.tests', {

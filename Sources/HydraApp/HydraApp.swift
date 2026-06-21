@@ -28,9 +28,9 @@ struct HydraApp: App {
     var body: some Scene {
         WindowGroup("Hydra Soundcard", id: "main") {
             ContentView()
-                .environmentObject(client)
-                .environmentObject(client.signals)
-                .environmentObject(client.meters)
+                .environment(client)
+                .environment(client.signals)
+                .environment(client.meters)
                 .environmentObject(daemon)
                 .environmentObject(updater)
         }
@@ -51,9 +51,9 @@ struct HydraApp: App {
         // sheet whose tab strip bled into the main window behind it.
         Settings {
             SettingsView()
-                .environmentObject(client)
-                .environmentObject(client.signals)
-                .environmentObject(client.meters)
+                .environment(client)
+                .environment(client.signals)
+                .environment(client.meters)
                 .environmentObject(daemon)
                 .environmentObject(updater)
         }
@@ -66,14 +66,14 @@ struct HydraApp: App {
         // Menu bar: status at a glance + scene quick-switch (Section 7.3).
         MenuBarExtra {
             MenuBarPanel()
-                .environmentObject(client)
+                .environment(client)
                 .environmentObject(updater)
         } label: {
             // Glanceable status: the icon itself reflects engine/daemon health —
             // the whole point of a menu bar extra (status without opening the app).
             // A dedicated view observes the client so the glyph updates live.
             MenuBarStatusLabel()
-                .environmentObject(client)
+                .environment(client)
         }
         .menuBarExtraStyle(.window)
     }
@@ -94,7 +94,7 @@ struct UpdateCommands: Commands {
 /// The menu bar glyph. Observes the client so the symbol reflects state live:
 /// offline → slashed, problem (no backplane) → warning, otherwise running waveform.
 private struct MenuBarStatusLabel: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
 
     var body: some View {
         Image(systemName: symbol)

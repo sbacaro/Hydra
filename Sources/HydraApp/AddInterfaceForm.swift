@@ -7,7 +7,7 @@ import SwiftUI
 import HydraCore
 
 struct AddInterfaceForm: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     @Environment(\.dismiss) private var dismiss
 
     private struct Template: Identifiable {

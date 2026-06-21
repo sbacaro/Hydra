@@ -1,10 +1,11 @@
 // Hydra Audio — GPL-3.0
 // SAP/SDP parser tests — runnable without any Dante hardware.
 
-import XCTest
+import Testing
+import Foundation
 @testable import HydraCore
 
-final class Aes67Tests: XCTestCase {
+struct Aes67Tests {
 
     /// A representative Dante AES67 SDP (as announced via SAP).
     private let danteSDP = """
@@ -39,44 +40,44 @@ final class Aes67Tests: XCTestCase {
         return Data(bytes)
     }
 
-    func testSAPAnnouncementWithMIME() {
+    @Test func sapAnnouncementWithMIME() {
         let announcement = SAPParser.parse(sapPacket(sdp: danteSDP))
-        XCTAssertNotNil(announcement)
-        XCTAssertEqual(announcement?.isDeletion, false)
-        XCTAssertEqual(announcement?.originAddress, "192.168.1.50")
-        XCTAssertEqual(announcement?.sdp.hasPrefix("v=0"), true)
+        #expect(announcement != nil)
+        #expect(announcement?.isDeletion == false)
+        #expect(announcement?.originAddress == "192.168.1.50")
+        #expect(announcement?.sdp.hasPrefix("v=0") == true)
     }
 
-    func testSAPAnnouncementWithoutMIME() {
+    @Test func sapAnnouncementWithoutMIME() {
         let announcement = SAPParser.parse(sapPacket(sdp: danteSDP, includeMIME: false))
-        XCTAssertNotNil(announcement)
-        XCTAssertEqual(announcement?.sdp.hasPrefix("v=0"), true)
+        #expect(announcement != nil)
+        #expect(announcement?.sdp.hasPrefix("v=0") == true)
     }
 
-    func testSAPDeletion() {
+    @Test func sapDeletion() {
         let announcement = SAPParser.parse(sapPacket(sdp: danteSDP, deletion: true))
-        XCTAssertEqual(announcement?.isDeletion, true)
+        #expect(announcement?.isDeletion == true)
     }
 
-    func testSAPRejectsGarbage() {
-        XCTAssertNil(SAPParser.parse(Data([0x00, 0x01, 0x02])))
-        XCTAssertNil(SAPParser.parse(Data(Array("not a sap packet at all".utf8))))
+    @Test func sapRejectsGarbage() {
+        #expect(SAPParser.parse(Data([0x00, 0x01, 0x02])) == nil)
+        #expect(SAPParser.parse(Data(Array("not a sap packet at all".utf8))) == nil)
     }
 
-    func testSDPParsesDanteStream() throws {
-        let stream = try XCTUnwrap(SDPParser.parseStream(sdp: danteSDP, origin: "192.168.1.50"))
-        XCTAssertEqual(stream.name, "DMP64PlusCAT : 32")
-        XCTAssertEqual(stream.address, "239.69.83.133")
-        XCTAssertEqual(stream.port, 5004)
-        XCTAssertEqual(stream.channels, 2)
-        XCTAssertEqual(stream.sampleRate, 48_000)
-        XCTAssertEqual(stream.encoding, "L24")
-        XCTAssertEqual(stream.origin, "192.168.1.50")
-        XCTAssertEqual(stream.id, "192.168.1.50/239.69.83.133:5004")
-        XCTAssertEqual(stream.nodeID, "aes67:192.168.1.50/239.69.83.133:5004")
+    @Test func sdpParsesDanteStream() throws {
+        let stream = try #require(SDPParser.parseStream(sdp: danteSDP, origin: "192.168.1.50"))
+        #expect(stream.name == "DMP64PlusCAT : 32")
+        #expect(stream.address == "239.69.83.133")
+        #expect(stream.port == 5004)
+        #expect(stream.channels == 2)
+        #expect(stream.sampleRate == 48_000)
+        #expect(stream.encoding == "L24")
+        #expect(stream.origin == "192.168.1.50")
+        #expect(stream.id == "192.168.1.50/239.69.83.133:5004")
+        #expect(stream.nodeID == "aes67:192.168.1.50/239.69.83.133:5004")
     }
 
-    func testSDPParsesL16EightChannels() throws {
+    @Test func sdpParsesL16EightChannels() throws {
         let sdp = """
         v=0
         o=- 99 99 IN IP4 10.0.0.7
@@ -86,13 +87,13 @@ final class Aes67Tests: XCTestCase {
         m=audio 5004 RTP/AVP 96
         a=rtpmap:96 L16/44100/8
         """
-        let stream = try XCTUnwrap(SDPParser.parseStream(sdp: sdp, origin: "10.0.0.7"))
-        XCTAssertEqual(stream.channels, 8)
-        XCTAssertEqual(stream.sampleRate, 44_100)
-        XCTAssertEqual(stream.encoding, "L16")
+        let stream = try #require(SDPParser.parseStream(sdp: sdp, origin: "10.0.0.7"))
+        #expect(stream.channels == 8)
+        #expect(stream.sampleRate == 44_100)
+        #expect(stream.encoding == "L16")
     }
 
-    func testSDPRejectsNonAudio() {
+    @Test func sdpRejectsNonAudio() {
         let sdp = """
         v=0
         o=- 1 1 IN IP4 10.0.0.1
@@ -101,10 +102,10 @@ final class Aes67Tests: XCTestCase {
         m=video 5004 RTP/AVP 96
         a=rtpmap:96 H264/90000
         """
-        XCTAssertNil(SDPParser.parseStream(sdp: sdp, origin: "10.0.0.1"))
+        #expect(SDPParser.parseStream(sdp: sdp, origin: "10.0.0.1") == nil)
     }
 
-    func testAes67MessagesRoundTrip() throws {
+    @Test func aes67MessagesRoundTrip() throws {
         let stream = Aes67Stream(id: "a/b:5004", name: "Test", address: "239.1.1.1",
                                  port: 5004, channels: 2, sampleRate: 48_000,
                                  encoding: "L24", origin: "10.0.0.1", subscribed: true)
@@ -112,15 +113,15 @@ final class Aes67Tests: XCTestCase {
                                    streams: [stream])
         guard case .aes67(let decoded) = try WSMessage.decode(
             from: try WSMessage.aes67(payload).encodedString()) else {
-            return XCTFail("expected .aes67")
+            Issue.record("expected .aes67"); return
         }
-        XCTAssertEqual(decoded, payload)
+        #expect(decoded == payload)
 
         guard case .subscribeStream(let sub) = try WSMessage.decode(
             from: try WSMessage.subscribeStream(SubscribeStreamPayload(id: stream.id, subscribed: false)).encodedString()) else {
-            return XCTFail("expected .subscribeStream")
+            Issue.record("expected .subscribeStream"); return
         }
-        XCTAssertEqual(sub.id, stream.id)
-        XCTAssertFalse(sub.subscribed)
+        #expect(sub.id == stream.id)
+        #expect(!sub.subscribed)
     }
 }

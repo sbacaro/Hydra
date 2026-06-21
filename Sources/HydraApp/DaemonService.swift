@@ -54,28 +54,16 @@ final class DaemonService: ObservableObject {
     /// User must approve in System Settings → Login Items before it runs.
     var needsApproval: Bool { status == .requiresApproval }
 
-    /// Register the agent (idempotent) so launchd starts hydrad (RunAtLoad) and
-    /// keeps it alive (KeepAlive) — the production path. Then, as a dev fallback,
-    /// make sure hydrad is actually up: with ad-hoc signing the agent's code
-    /// requirement (LWCR) goes stale across rebuilds and launchd refuses to spawn
-    /// it (EX_CONFIG), so we launch the embedded helper directly. Guarded by a
-    /// running-process check so we never start a second instance.
+    /// Bring hydrad up. App-managed (not launchd-managed): we launch the embedded
+    /// helper DIRECTLY and immediately. This is reliable regardless of code-signing
+    /// — it does NOT depend on launchd accepting the agent's code requirement
+    /// (which goes stale across rebuilds under ad-hoc signing and makes launchd
+    /// refuse to spawn it). The `helperRunning` guard means we never start a second
+    /// instance (e.g. if a launchd-managed or manually-started hydrad is already up).
+    /// The app shows a loading view until the WebSocket connects.
     func enable() {
-        if service.status != .enabled {
-            do {
-                try service.register()
-                log.info("Registered hydrad agent")
-            } catch {
-                log.error("Failed to register hydrad agent: \(error.localizedDescription, privacy: .public)")
-            }
-        }
+        launchEmbeddedHelperIfNeeded()
         status = service.status
-
-        // Give launchd a moment to spawn hydrad; if it didn't, launch it ourselves.
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1.5))
-            self?.launchEmbeddedHelperIfNeeded()
-        }
     }
 
     /// True when a hydrad process is already running (started by launchd or us).

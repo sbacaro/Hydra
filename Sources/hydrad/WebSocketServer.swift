@@ -6,9 +6,10 @@ import Foundation
 import Network
 import HydraCore
 
-final class WebSocketServer {
+final class WebSocketServer: @unchecked Sendable {
 
-    private let listener: NWListener
+    private let port: UInt16
+    private var listener: NWListener?
     private let queue = DispatchQueue(label: "hydra.ws.server")
     private var connections: [ObjectIdentifier: NWConnection] = [:]
     /// Called on the server queue when a client becomes ready.
@@ -19,31 +20,41 @@ final class WebSocketServer {
     init(port: UInt16,
          onConnect: @escaping (NWConnection) -> Void,
          onMessage: @escaping (WSMessage, NWConnection) -> Void) throws {
+        self.port = port
         self.onConnect = onConnect
         self.onMessage = onMessage
+        self.listener = try NWListener(using: WebSocketServer.makeParams(port: port))
+    }
 
+    /// Loopback-only TCP + WebSocket parameters (never exposed to the network).
+    private static func makeParams(port: UInt16) -> NWParameters {
         let params = NWParameters.tcp
-        // Loopback only — never exposed to the network.
         params.requiredLocalEndpoint = NWEndpoint.hostPort(
             host: .ipv4(.loopback),
             port: NWEndpoint.Port(rawValue: port)!)
         params.allowLocalEndpointReuse = true
-
         let wsOptions = NWProtocolWebSocket.Options()
         wsOptions.autoReplyPing = true
         params.defaultProtocolStack.applicationProtocols.insert(wsOptions, at: 0)
-
-        listener = try NWListener(using: params)
+        return params
     }
 
     func start() {
-        listener.stateUpdateHandler = { state in
+        startListener()
+    }
+
+    private func startListener() {
+        guard let listener else { return }
+        listener.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
                 log("WebSocket listening on \(Hydra.daemonHost):\(Hydra.daemonPort)")
             case .failed(let error):
-                log("Listener failed: \(error) — exiting")
-                exit(1)
+                // The control socket failing must NOT take down the audio engine.
+                // Keep audio alive AND retry binding — e.g. the port may be held
+                // briefly by a previous daemon instance across a relaunch.
+                log("Listener failed: \(error) — retrying in 2s (audio engine kept alive)")
+                self?.scheduleListenerRestart()
             default:
                 break
             }
@@ -52,6 +63,15 @@ final class WebSocketServer {
             self?.accept(connection)
         }
         listener.start(queue: queue)
+    }
+
+    private func scheduleListenerRestart() {
+        queue.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self else { return }
+            self.listener?.cancel()
+            self.listener = try? NWListener(using: WebSocketServer.makeParams(port: self.port))
+            self.startListener()
+        }
     }
 
     // MARK: - Connections
@@ -66,7 +86,7 @@ final class WebSocketServer {
             case .ready:
                 self?.onConnect(connection)
             case .failed, .cancelled:
-                self?.queue.async {
+                self?.queue.async { [weak self] in
                     self?.connections.removeValue(forKey: key)
                     log("Client disconnected")
                 }
@@ -115,7 +135,16 @@ final class WebSocketServer {
         connection.send(content: Data(text.utf8),
                         contentContext: context,
                         isComplete: true,
-                        completion: .contentProcessed { _ in })
+                        completion: .contentProcessed { [weak self] error in
+            // A send failure means the peer is gone (half-open socket). Prune it
+            // so broadcasts stop targeting a dead client and state can resync.
+            guard let self, let error else { return }
+            log("Send failed: \(error) — dropping client")
+            connection.cancel()
+            self.queue.async {
+                self.connections.removeValue(forKey: ObjectIdentifier(connection))
+            }
+        })
     }
 
     /// Broadcast to every connected client (used when state changes).
@@ -128,7 +157,11 @@ final class WebSocketServer {
     }
 }
 
+/// Daemon-wide log entry point. Routes to Apple's unified logging (persistent,
+/// queryable, survives a relaunch) under subsystem "audio.hydra" / category
+/// "daemon". Also echoes to stdout so `hydrad` run in a terminal stays readable.
+/// View later with:  log show --predicate 'subsystem == "audio.hydra"' --info
 func log(_ message: String) {
-    let stamp = ISO8601DateFormatter().string(from: Date())
-    print("[\(stamp)] hydrad: \(message)")
+    HydraLog.daemon.log("\(message, privacy: .public)")
+    print("hydrad: \(message)")
 }

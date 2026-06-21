@@ -12,8 +12,9 @@ import HydraCore
 /// The menu bar extra's window: status, quick open/settings, recording control,
 /// scene recall, save-as, and launch-at-login.
 struct MenuBarPanel: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     @EnvironmentObject private var updater: Updater
+    @Environment(\.openWindow) private var openWindow
     @State private var newSceneName = ""
     @State private var loginTick = 0
 

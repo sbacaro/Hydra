@@ -2,6 +2,23 @@
 
 All notable changes to Hydra are documented here.
 
+## [0.20.0 beta] — 2026-06-20
+
+### Modernization & Swift 6 Native Concurrency
+- **Native Mutex Migration**: Replaced C-style `NSLock` locks with Swift 6 native `Synchronization.Mutex` in `ModuleManager` and `PtpClock` to ensure safety and compiler-enforced thread-safety.
+- **Adaptive IPC Loop**: Rewrote the out-of-process VST host audio thread loop (`runAudioLoop`) in `hydra-plugin-host` with adaptive sleeping. Thread sleeps when idle, bringing CPU usage down to 0% when no audio is routed.
+- **Real-Time Priority VST Host**: Promoted the out-of-process VST host thread to real-time priority using Mach `THREAD_TIME_CONSTRAINT_POLICY` to eliminate audio clicks under load.
+- **Synchronized Thread Teardown**: Introduced DispatchSemaphores (`threadExitSemaphore`) in `NdiManager` (RX/TX) and `Aes67Tx` to block thread deallocation until processing terminates, eliminating crash-on-close segmentation faults.
+
+### Performance & UI Refinements
+- **O(1) Grid Routing Lookup**: Extracted grid connection indexer into a reusable `ConnectionIndex` struct, optimizing routing lookups from $O(N)$ linear scans to $O(1)$ fast dictionary lookups.
+- **Settings UI Polish**:
+  - Restyled the available VST3 plug-ins view as a native list box with background and border.
+  - Added a search bar with a background card and icon.
+  - Integrated `ContentUnavailableView` for empty states when VST search has no results.
+  - Added a rounded border to the OSC UDP port field.
+- **Startup Stability**: Added static session checking in `InstallManager` to prevent driver refresh/reinstallation loops at launch.
+
 ## [0.15.1 beta] — 2026-06-04
 
 ### Performance (user report: HydraApp at 100% CPU)

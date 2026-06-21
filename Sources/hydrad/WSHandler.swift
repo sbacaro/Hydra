@@ -7,7 +7,11 @@ import Network
 import HydraCore
 
 /// Handles one inbound WebSocket message from `connection`.
-/// Called from main.swift's `onMessage` closure.
+/// Called from main.swift's `onMessage` closure (hopped to the main actor).
+/// The daemon's control plane is main-actor-isolated: the globals it touches
+/// (store, server, *Manager) live in main.swift's main-actor top level, and the
+/// heavy lifting happens on each manager's own internal queue.
+@MainActor
 func handleWSMessage(_ message: WSMessage, from connection: NWConnection) {
     switch message {
     case .getStatus:

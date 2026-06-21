@@ -357,6 +357,23 @@ bool hydra_vst_has_editor(void *opaque)
     return instance && instance->controller != nullptr;
 }
 
+void hydra_vst_set_parameter(void *opaque, uint32_t param_id, double value)
+{
+    auto instance = static_cast<Instance *>(opaque);
+    if (!instance) {
+        return;
+    }
+    // Same lock-free push as a GUI edit (HydraComponentHandler::performEdit), so
+    // the value reaches the audio thread on the next process() block.
+    uint32_t w = instance->ringWrite.load(std::memory_order_relaxed);
+    instance->ring[w % Instance::kRingSize] = {(ParamID)param_id, (ParamValue)value};
+    instance->ringWrite.store(w + 1, std::memory_order_release);
+    // Keep the editor (if open) in sync with the externally-set value.
+    if (instance->controller) {
+        instance->controller->setParamNormalized((ParamID)param_id, (ParamValue)value);
+    }
+}
+
 bool hydra_vst_open_editor(void *opaque, const char *title)
 {
     auto instance = static_cast<Instance *>(opaque);

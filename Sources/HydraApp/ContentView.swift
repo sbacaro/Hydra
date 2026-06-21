@@ -12,7 +12,7 @@ import SwiftUI
 import HydraCore
 
 struct ContentView: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     @EnvironmentObject private var daemon: DaemonService
     @EnvironmentObject private var updater: Updater
     @StateObject private var installer = InstallManager()
@@ -87,6 +87,15 @@ struct ContentView: View {
         .overlay {
             if showPalette { paletteOverlay }
         }
+        // Startup loading screen: the app launches the daemon directly, so show a
+        // clean "starting up" state until the WebSocket connects (instead of an
+        // empty/offline grid). Hidden during first-run onboarding.
+        .overlay {
+            if client.connectionState != .connected && !showWelcome {
+                loadingOverlay
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: client.connectionState)
         // ⌘K from anywhere in the window.
         .background(
             Button("") { showPalette.toggle() }
@@ -99,7 +108,7 @@ struct ContentView: View {
         // First-run onboarding — auto-present once; reopenable from Help.
         .sheet(isPresented: $showWelcome) {
             WelcomeSheet()
-                .environmentObject(client)
+                .environment(client)
                 .environmentObject(daemon)
         }
         .onAppear {
@@ -115,6 +124,25 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .showWelcomeSheet)) { _ in
             showWelcome = true
         }
+    }
+
+    // MARK: - Startup loading
+
+    private var loadingOverlay: some View {
+        ZStack {
+            Rectangle().fill(.regularMaterial).ignoresSafeArea()
+            VStack(spacing: 14) {
+                ProgressView().controlSize(.large)
+                Text("Starting Hydra")
+                    .font(.title3.weight(.semibold))
+                Text(client.connectionState == .connecting
+                     ? "Connecting to the audio engine…"
+                     : "Launching the audio engine…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .transition(.opacity)
     }
 
     // MARK: - Update banner

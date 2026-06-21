@@ -230,11 +230,15 @@ public struct VSTChainInfo: Codable, Sendable, Equatable, Identifiable {
     public var id: UUID
     public var name: String
     public var plugins: [VSTPlugin]
+    /// Mirror of StripInfo.isolated — host this chain out-of-process.
+    public var isolated: Bool
 
-    public init(id: UUID = UUID(), name: String, plugins: [VSTPlugin] = []) {
+    public init(id: UUID = UUID(), name: String, plugins: [VSTPlugin] = [],
+                isolated: Bool = true) {
         self.id = id
         self.name = name
         self.plugins = plugins
+        self.isolated = isolated
     }
 }
 
@@ -320,15 +324,38 @@ public struct StripInfo: Codable, Sendable, Equatable, Identifiable {
     public var trim: Float
     /// Ordered insert slots.
     public var inserts: [VSTPlugin]
+    /// Run this strip's inserts in a SEPARATE process (crash isolation). On by
+    /// default — a crashing plugin then takes down only that host, not the
+    /// daemon. Turn off for plugins you trust to drop the ~1-block latency.
+    public var isolated: Bool
 
     public init(id: UUID = UUID(), nodeID: String, channelIndex: Int,
-                stereo: Bool, trim: Float = 1.0, inserts: [VSTPlugin] = []) {
+                stereo: Bool, trim: Float = 1.0, inserts: [VSTPlugin] = [],
+                isolated: Bool = true) {
         self.id = id
         self.nodeID = nodeID
         self.channelIndex = channelIndex
         self.stereo = stereo
         self.trim = trim
         self.inserts = inserts
+        self.isolated = isolated
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, nodeID, channelIndex, stereo, trim, inserts, isolated
+    }
+
+    // Backward compatible: strips persisted before this field default to
+    // isolated (crash-protected).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        nodeID = try c.decode(String.self, forKey: .nodeID)
+        channelIndex = try c.decode(Int.self, forKey: .channelIndex)
+        stereo = try c.decode(Bool.self, forKey: .stereo)
+        trim = try c.decode(Float.self, forKey: .trim)
+        inserts = try c.decode([VSTPlugin].self, forKey: .inserts)
+        isolated = try c.decodeIfPresent(Bool.self, forKey: .isolated) ?? true
     }
 
     /// Storage/lookup key.

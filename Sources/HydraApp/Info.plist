@@ -38,11 +38,10 @@
 	     with EdDSA and verified against SUPublicEDKey. -->
 	<key>SUFeedURL</key>
 	<string>https://github.com/sbacaro/Hydra/releases/latest/download/appcast.xml</string>
-	<!-- REPLACE with the public key printed by ThirdParty/Sparkle/bin/generate_keys.
-	     See Packaging/RELEASING.md. With the placeholder, update verification fails
-	     by design (no silent unsigned updates). -->
+	<!-- EdDSA public key matching sparkle_private_key.txt (used by CI to sign
+	     releases). Derived from that private key; updates are verified against it. -->
 	<key>SUPublicEDKey</key>
-	<string>REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY</string>
+	<string>17zKsHRjwKc9aIJfpS6cI07GM8YTQnafmPMr7agNXoI=</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<!-- Check on launch and every 24h while running. -->

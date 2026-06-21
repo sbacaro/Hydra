@@ -7,7 +7,7 @@ import SwiftUI
 import HydraCore
 
 struct WelcomeSheet: View {
-    @EnvironmentObject private var client: DaemonClient
+    @Environment(DaemonClient.self) private var client
     @EnvironmentObject private var daemon: DaemonService
     @StateObject private var install = InstallManager()
     @Environment(\.dismiss) private var dismiss
