@@ -69,11 +69,23 @@ jobs:
           echo "sha=$PKG.sha256" >> "$GITHUB_OUTPUT"
           echo "Checksum: $(cat "$PKG.sha256")"
 
+      # Use this version's CHANGELOG section as the release body (the auto-
+      # generated commit list is appended below it via generate_release_notes).
+      - name: Extract release notes from CHANGELOG
+        run: |
+          awk '/^## \[${{ steps.vars.outputs.version }}/{f=1;next} /^## \[/{f=0} f' \
+            CHANGELOG.md > release_notes.md
+          if [ ! -s release_notes.md ]; then
+            echo "Hydra ${{ steps.vars.outputs.version }} beta" > release_notes.md
+          fi
+          echo "----- release body -----"; cat release_notes.md
+
       - name: Publish GitHub Release (pkg + sha256)
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ github.ref_name }}
           name: Hydra ${{ steps.vars.outputs.version }}
+          body_path: release_notes.md
           generate_release_notes: true
           # Publish a real, non-draft, non-prerelease "latest" release. The
           # in-app updater queries /releases/latest, which EXCLUDES drafts and
