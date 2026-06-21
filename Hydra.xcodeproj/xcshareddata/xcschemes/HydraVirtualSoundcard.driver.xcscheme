@@ -15,7 +15,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "2FA86CBFF10758B66C18A7A5"
-               BuildableName = "HydraVirtualSoundcard.bundle"
+               BuildableName = "HydraVirtualSoundcard.driver"
                BlueprintName = "HydraVirtualSoundcard"
                ReferencedContainer = "container:Hydra.xcodeproj">
             </BuildableReference>

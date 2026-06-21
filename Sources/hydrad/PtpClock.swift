@@ -132,28 +132,16 @@ final class PtpClock: @unchecked Sendable {
 
     private func sourceIdentity(_ b: [UInt8]) -> [UInt8] { Array(b[20..<28]) }
 
-    private static func formatIdentity(_ id: ArraySlice<UInt8>) -> String {
-        id.map { String(format: "%02X", $0) }.joined(separator: "-")
-    }
-
-    /// 10-byte PTP timestamp at `offset`: 6-byte seconds + 4-byte nanos.
+    /// 10-byte PTP timestamp at `offset` (delegates to the pure parser).
     private func timestamp(_ b: [UInt8], at offset: Int) -> Double? {
-        guard b.count >= offset + 10 else { return nil }
-        var seconds: UInt64 = 0
-        for i in 0..<6 { seconds = (seconds << 8) | UInt64(b[offset + i]) }
-        var nanos: UInt32 = 0
-        for i in 6..<10 { nanos = (nanos << 8) | UInt32(b[offset + i]) }
-        return Double(seconds) + Double(nanos) / 1_000_000_000
+        PtpParsing.timestamp(b, at: offset)
     }
 
     private func handleAnnounce(_ b: [UInt8], domain: UInt8) {
-        guard b.count >= 64 else { return }
+        guard let parsed = PtpParsing.announceDataset(b) else { return }
         // BMCA comparison tuple, in standard precedence order.
-        let dataset: [UInt8] = [b[47]]              // priority1
-            + Array(b[48..<52])                     // gm clockQuality
-            + [b[52]]                               // priority2
-            + Array(b[53..<61])                     // gm identity
-        let gm = Self.formatIdentity(b[53..<61])
+        let dataset = parsed.dataset
+        let gm = parsed.grandmaster
         let now = Self.hostNanos()
 
         if var current = master {
@@ -163,7 +151,7 @@ final class PtpClock: @unchecked Sendable {
                 return
             }
             // Lexicographic compare = BMCA precedence (lower wins).
-            if dataset.lexicographicallyPrecedes(current.dataset) {
+            if PtpParsing.bmcaPrecedes(dataset, current.dataset) {
                 master = Master(dataset: dataset, grandmaster: gm,
                                 domain: domain, lastAnnounce: now)
                 offsetWindow.removeAll()
@@ -225,7 +213,7 @@ final class PtpClock: @unchecked Sendable {
     private func publishLocked() {
         let fresh = Self.hostNanos() &- lastSyncAt < 5_000_000_000
         let locked = master != nil && offsetWindow.count >= 4 && fresh
-        let median = offsetWindow.sorted()[safePtp: offsetWindow.count / 2] ?? 0
+        let median = PtpParsing.median(offsetWindow)
 
         var status = PtpStatus()
         status.locked = locked
@@ -241,11 +229,5 @@ final class PtpClock: @unchecked Sendable {
             published = status
             onChange?(status)
         }
-    }
-}
-
-private extension Array {
-    subscript(safePtp index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
     }
 }

@@ -244,19 +244,7 @@ final class DaemonClient {
     /// Console patch rules between two lanes:
     /// stereo→stereo: L→L, R→R · stereo→mono: both summed · mono→stereo: duplicated.
     func channelPairs(source: GridEntry, destination: GridEntry) -> [(Int, Int)] {
-        switch (source.channels.count, destination.channels.count) {
-        case (2, 2):
-            return [(source.channels[0], destination.channels[0]),
-                    (source.channels[1], destination.channels[1])]
-        case (2, 1):
-            return [(source.channels[0], destination.channels[0]),
-                    (source.channels[1], destination.channels[0])]
-        case (1, 2):
-            return [(source.channels[0], destination.channels[0]),
-                    (source.channels[0], destination.channels[1])]
-        default:
-            return [(source.channels[0], destination.channels[0])]
-        }
+        ChannelPairing.pairs(source: source.channels, destination: destination.channels)
     }
 
     /// All underlying connections of a cell (any present = cell connected).

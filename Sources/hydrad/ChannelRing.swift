@@ -32,12 +32,6 @@ final class ChannelRing {
     private var readPos: Double = 0
     private var primed = false
 
-    /// Maximum servo correction (±0.2% ≈ ±2000 ppm — far above any real
-    /// crystal drift, small enough to be inaudible).
-    private static let maxCorrection = 0.002
-    /// Proportional servo gain.
-    private static let servoGain = 0.01
-
     init(channels: Int, producerRate: Double, consumerRate: Double,
          capacityFrames: Int = Hydra.deviceRingFrames) {
         precondition(channels > 0)
@@ -46,8 +40,8 @@ final class ChannelRing {
         self.channels = channels
         self.capacity = capacityFrames
         self.mask = Int64(capacityFrames - 1)
-        self.nominalStep = (producerRate > 0 && consumerRate > 0)
-            ? producerRate / consumerRate : 1.0
+        self.nominalStep = ResampleServo.nominalStep(producerRate: producerRate,
+                                                     consumerRate: consumerRate)
         self.data = .allocate(capacity: capacityFrames * channels)
         self.data.initialize(repeating: 0, count: capacityFrames * channels)
     }
@@ -105,14 +99,11 @@ final class ChannelRing {
             fill = target
         }
 
-        // Fill-level servo around the nominal ratio.
-        let deviation = (fill - target) / target
-        let correction = max(-Self.maxCorrection, min(Self.maxCorrection,
-                                                      deviation * Self.servoGain))
-        let step = nominalStep * (1 + correction)
+        // Fill-level servo around the nominal ratio (pure math in HydraCore).
+        let step = ResampleServo.step(fill: fill, target: target, nominalStep: nominalStep)
 
         // Underrun: not enough ahead of us — emit silence, keep position.
-        guard fill >= step * Double(frames) + 2 else {
+        guard !ResampleServo.isUnderrun(fill: fill, step: step, frames: frames) else {
             silence(destination, frames: frames)
             return
         }

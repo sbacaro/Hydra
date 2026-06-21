@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 70;
 	objects = {
 
 /* Begin PBXAggregateTarget section */
@@ -16,6 +16,7 @@
 			dependencies = (
 			);
 			name = FetchVST3SDK;
+			productName = FetchVST3SDK;
 		};
 /* End PBXAggregateTarget section */
 
@@ -265,7 +266,7 @@
 		1A438D7489A97EFD3FFB727F /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/CoreFoundation.framework; sourceTree = DEVELOPER_DIR; };
 		1A8DF8D3A3C85F05124E48AB /* Media.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Media.xcassets; sourceTree = "<group>"; };
 		1AB4679C1A1A8177176BE4A1 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
-		2C2324A3A5B87CA3D460D22A /* Sparkle.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; lastKnownFileType = wrapper.framework; name = Sparkle.framework; path = ThirdParty/Sparkle/Sparkle.framework; sourceTree = "<group>"; };
+		2C2324A3A5B87CA3D460D22A /* Sparkle.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; name = Sparkle.framework; path = ThirdParty/Sparkle/Sparkle.framework; sourceTree = "<group>"; };
 		41A6CCF176C5017F160A86EF /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		641CD140A7B9A9E7FC4A8E25 /* hydrad.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = hydrad.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8AC74E89197AB8B059942AD8 /* CoreAudio.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreAudio.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/CoreAudio.framework; sourceTree = DEVELOPER_DIR; };
@@ -273,49 +274,49 @@
 		8D0C915C3A9D303AA0DF1C61 /* HydraVST.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = HydraVST.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		98CDDCB31F1B8F7F8DE3DF5D /* HydraModuleABI.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = HydraModuleABI.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		9BAA23495402FD1D7F99A553 /* HydraCoreTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HydraCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		AB3C8CD9CA6A8042F3DACFB0 /* HydraApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HydraApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB3C8CD9CA6A8042F3DACFB0 /* HydraApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = HydraApp.app; path = Hydra.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B25634D89AC9F9E981C474E3 /* audio.hydra.daemon.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; name = audio.hydra.daemon.plist; path = Sources/HydraApp/LaunchAgents/audio.hydra.daemon.plist; sourceTree = "<group>"; };
 		DA28C30142622EA73160CFEC /* Accelerate.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Accelerate.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Accelerate.framework; sourceTree = DEVELOPER_DIR; };
-		F74242A9835DBFA741E7265F /* HydraVirtualSoundcard.bundle */ = {isa = PBXFileReference; explicitFileType = "wrapper.plug-in"; includeInIndex = 0; path = HydraVirtualSoundcard.bundle; sourceTree = BUILT_PRODUCTS_DIR; };
+		F74242A9835DBFA741E7265F /* HydraVirtualSoundcard.bundle */ = {isa = PBXFileReference; explicitFileType = "wrapper.plug-in"; includeInIndex = 0; name = HydraVirtualSoundcard.bundle; path = HydraVirtualSoundcard.driver; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		173F2C19D1D4717B746346CA /* Exceptions for "Sources/HydraVST" folder in "HydraVST" target */ = {
+		173F2C19D1D4717B746346CA /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			publicHeaders = (
 				include/hydra_vst.h,
 			);
 			target = 9EFD6AC7312B1CA067F0C572 /* HydraVST */;
 		};
-		3271101167543486254E5FA4 /* Exceptions for "Backplane/Driver" folder in "HydraVirtualSoundcard" target */ = {
+		3271101167543486254E5FA4 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Hydra.plist,
 			);
 			target = 2FA86CBFF10758B66C18A7A5 /* HydraVirtualSoundcard */;
 		};
-		84932BD328EE744BEE9050FB /* Exceptions for "Sources/HydraNDIShim" folder in "HydraNDIShim" target */ = {
+		84932BD328EE744BEE9050FB /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			publicHeaders = (
 				include/hydra_ndi.h,
 			);
 			target = 8B701DAF6C6B6FBD50A648B4 /* HydraNDIShim */;
 		};
-		92E9A35DF66AD29A448EDBAB /* Exceptions for "Sources/HydraModuleABI" folder in "HydraModuleABI" target */ = {
+		92E9A35DF66AD29A448EDBAB /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			publicHeaders = (
 				include/hydra_module.h,
 			);
 			target = B2EBD9249B21A07E7277F7BC /* HydraModuleABI */;
 		};
-		97F858691F973183B2D90054 /* Exceptions for "Sources/hydrad" folder in "hydrad" target */ = {
+		97F858691F973183B2D90054 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
 			target = 97494D2DD327725B17AF4676 /* hydrad */;
 		};
-		DAA0D974FBFCA8BBBA125BDF /* Exceptions for "Sources/HydraApp" folder in "HydraApp" target */ = {
+		DAA0D974FBFCA8BBBA125BDF /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
@@ -323,7 +324,7 @@
 			);
 			target = B210A1826660AFF0D6C6EB98 /* HydraApp */;
 		};
-		E8580CC172B781157B920DF3 /* Exceptions for "Sources/HydraPluginHostABI" folder in "HydraPluginHostABI" target */ = {
+		E8580CC172B781157B920DF3 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			publicHeaders = (
 				include/hydra_plugin_shm.h,
@@ -333,83 +334,16 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		2BC6C4196466C19DDCEE1B9D /* Sources/HydraVST */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				173F2C19D1D4717B746346CA /* Exceptions for "Sources/HydraVST" folder in "HydraVST" target */,
-			);
-			path = Sources/HydraVST;
-			sourceTree = "<group>";
-		};
-		5CD2DF02721EC060BB7A08CB /* Sources/HydraPluginHostABI */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				E8580CC172B781157B920DF3 /* Exceptions for "Sources/HydraPluginHostABI" folder in "HydraPluginHostABI" target */,
-			);
-			path = Sources/HydraPluginHostABI;
-			sourceTree = "<group>";
-		};
-		622E2ACB628E1948741C4E3E /* Sources/HydraCore */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
-			path = Sources/HydraCore;
-			sourceTree = "<group>";
-		};
-		714FB4ED9F41F4A6460380AF /* Sources/HydraModuleABI */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				92E9A35DF66AD29A448EDBAB /* Exceptions for "Sources/HydraModuleABI" folder in "HydraModuleABI" target */,
-			);
-			path = Sources/HydraModuleABI;
-			sourceTree = "<group>";
-		};
-		785497E2F991C9C019E07922 /* Backplane/Driver */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				3271101167543486254E5FA4 /* Exceptions for "Backplane/Driver" folder in "HydraVirtualSoundcard" target */,
-			);
-			path = Backplane/Driver;
-			sourceTree = "<group>";
-		};
-		A13EB9CE588C0FE9B76A2A0E /* Sources/HydraNDIShim */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				84932BD328EE744BEE9050FB /* Exceptions for "Sources/HydraNDIShim" folder in "HydraNDIShim" target */,
-			);
-			path = Sources/HydraNDIShim;
-			sourceTree = "<group>";
-		};
-		A5AAA9468475F60155F4BE0A /* Tests/HydraCoreTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
-			path = Tests/HydraCoreTests;
-			sourceTree = "<group>";
-		};
-		CDCE48A215766CBC31C06811 /* Sources/hydra-plugin-host */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
-			path = "Sources/hydra-plugin-host";
-			sourceTree = "<group>";
-		};
-		E989BA2C37079DB857C37273 /* Sources/hydrad */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				97F858691F973183B2D90054 /* Exceptions for "Sources/hydrad" folder in "hydrad" target */,
-			);
-			path = Sources/hydrad;
-			sourceTree = "<group>";
-		};
-		F7926507AC326604B40069CF /* Sources/HydraApp */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				DAA0D974FBFCA8BBBA125BDF /* Exceptions for "Sources/HydraApp" folder in "HydraApp" target */,
-			);
-			path = Sources/HydraApp;
-			sourceTree = "<group>";
-		};
+		2BC6C4196466C19DDCEE1B9D /* Sources/HydraVST */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (173F2C19D1D4717B746346CA /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Sources/HydraVST; sourceTree = "<group>"; };
+		5CD2DF02721EC060BB7A08CB /* Sources/HydraPluginHostABI */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (E8580CC172B781157B920DF3 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Sources/HydraPluginHostABI; sourceTree = "<group>"; };
+		622E2ACB628E1948741C4E3E /* Sources/HydraCore */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Sources/HydraCore; sourceTree = "<group>"; };
+		714FB4ED9F41F4A6460380AF /* Sources/HydraModuleABI */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (92E9A35DF66AD29A448EDBAB /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Sources/HydraModuleABI; sourceTree = "<group>"; };
+		785497E2F991C9C019E07922 /* Backplane/Driver */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (3271101167543486254E5FA4 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Backplane/Driver; sourceTree = "<group>"; };
+		A13EB9CE588C0FE9B76A2A0E /* Sources/HydraNDIShim */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (84932BD328EE744BEE9050FB /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Sources/HydraNDIShim; sourceTree = "<group>"; };
+		A5AAA9468475F60155F4BE0A /* Tests/HydraCoreTests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Tests/HydraCoreTests; sourceTree = "<group>"; };
+		CDCE48A215766CBC31C06811 /* Sources/hydra-plugin-host */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = "Sources/hydra-plugin-host"; sourceTree = "<group>"; };
+		E989BA2C37079DB857C37273 /* Sources/hydrad */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (97F858691F973183B2D90054 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Sources/hydrad; sourceTree = "<group>"; };
+		F7926507AC326604B40069CF /* Sources/HydraApp */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (DAA0D974FBFCA8BBBA125BDF /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Sources/HydraApp; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -856,8 +790,6 @@
 				"pt-BR",
 			);
 			mainGroup = CD1A04FCD2F483C8F75591D8;
-			minimizedProjectReferenceProxies = 0;
-			preferredProjectObjectVersion = 77;
 			productRefGroup = F3DBCFAF281FCBD5B0088975 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";

@@ -47,14 +47,26 @@ jobs:
             -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO
 
-      # Smoke-build the app (engine + UI) without signing, so a broken build is
-      # caught even when no test covers the changed code.
+      # Smoke-build the app (UI) without signing, so a broken build is caught
+      # even when no test covers the changed code.
       - name: Build HydraApp (unsigned)
         run: |
           set -o pipefail
           xcodebuild build \
             -project Hydra.xcodeproj \
             -scheme HydraApp \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO
+
+      # Smoke-build the daemon too. The HydraCore test bundle only links
+      # HydraCore, so a compile error in hydrad (Core Audio / RT code) would
+      # otherwise slip past CI. This builds the audio engine target as well.
+      - name: Build hydrad (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Hydra.xcodeproj \
+            -scheme hydrad \
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO
 

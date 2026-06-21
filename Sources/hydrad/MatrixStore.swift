@@ -228,35 +228,9 @@ final class MatrixStore {
         }
     }
 
+    /// Delegates to the pure, unit-tested validator in HydraCore.
     private func endpointPlausible(_ point: PatchPoint) -> Bool {
-        if point.nodeID == Hydra.backplaneNodeID {
-            return (0..<Hydra.backplaneChannels).contains(point.channelIndex)
-        }
-        if Hydra.deviceUID(fromNodeID: point.nodeID) != nil {
-            return (0..<Hydra.maxDeviceChannels).contains(point.channelIndex)
-        }
-        if Hydra.appKey(fromNodeID: point.nodeID) != nil {
-            return (0..<Hydra.appTapChannels).contains(point.channelIndex)
-        }
-        if Hydra.aes67StreamID(fromNodeID: point.nodeID) != nil {
-            return (0..<64).contains(point.channelIndex)
-        }
-        if Hydra.ndiSourceID(fromNodeID: point.nodeID) != nil {
-            return (0..<Hydra.ndiMaxChannels).contains(point.channelIndex)
-        }
-        if Hydra.vstChainID(fromNodeID: point.nodeID) != nil {
-            return (0..<Hydra.vstChainChannels).contains(point.channelIndex)
-        }
-        // Module SOURCES (mod:, e.g. a Dante RX channel) and the module SINK
-        // (modtx:, the Dante TX node). Without these, any patch involving a Dante
-        // endpoint was rejected by upsert → the connection "clicked and vanished".
-        if Hydra.moduleSourceID(fromNodeID: point.nodeID) != nil {
-            return (0..<Hydra.moduleMaxChannels).contains(point.channelIndex)
-        }
-        if Hydra.moduleSinkID(fromNodeID: point.nodeID) != nil {
-            return (0..<Hydra.moduleMaxChannels).contains(point.channelIndex)
-        }
-        return false
+        PatchValidation.endpointPlausible(point)
     }
 
     /// Upsert with validation and feedback protection. Returns true if the
@@ -287,27 +261,7 @@ final class MatrixStore {
     /// (edge s→d per connection). A new edge that closes a cycle — including
     /// s == d — would howl. Other node types cannot loop internally.
     private func wouldFeedbackLocked(adding new: Connection) -> Bool {
-        guard new.source.nodeID == Hydra.backplaneNodeID,
-              new.destination.nodeID == Hydra.backplaneNodeID else { return false }
-        let s = new.source.channelIndex
-        let d = new.destination.channelIndex
-        if s == d { return true }
-
-        var adjacency: [Int: [Int]] = [:]
-        for c in matrix.connections
-        where c.source.nodeID == Hydra.backplaneNodeID
-           && c.destination.nodeID == Hydra.backplaneNodeID {
-            adjacency[c.source.channelIndex, default: []].append(c.destination.channelIndex)
-        }
-        // Path from d back to s through existing edges?
-        var stack = [d]
-        var seen: Set<Int> = []
-        while let node = stack.popLast() {
-            if node == s { return true }
-            guard seen.insert(node).inserted else { continue }
-            stack.append(contentsOf: adjacency[node] ?? [])
-        }
-        return false
+        PatchValidation.wouldFeedback(adding: new, existing: matrix.connections)
     }
 
     func remove(_ connection: Connection) -> Bool {

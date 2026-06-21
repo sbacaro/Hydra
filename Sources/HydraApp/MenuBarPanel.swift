@@ -1,16 +1,105 @@
 // Hydra Audio — GPL-3.0
 // Menu bar extra: glanceable status + the few commands worth reaching without
-// opening the main window — open/settings, per-interface recording, scene recall,
-// launch-at-login. Deliberately a quick-access surface, not a second UI (HIG:
-// "the menu bar provides quick access to status and frequently used commands").
+// opening the main window — open/settings, live engine metrics, per-interface
+// recording, scene recall, launch-at-login. Deliberately a quick-access surface,
+// not a second UI (HIG: "the menu bar provides quick access to status and
+// frequently used commands").
+//
+// Design: one consistent type scale (see `Font` tokens below), translucent
+// "Liquid Glass" cards grouping each section, and a single header that carries
+// the brand mark, version and live status pill. Every row shares the same
+// spacing rhythm so nothing looks ad-hoc.
 
 import SwiftUI
 import ServiceManagement
 import AppKit
 import HydraCore
 
-/// The menu bar extra's window: status, quick open/settings, recording control,
-/// scene recall, save-as, and launch-at-login.
+// MARK: - Menu-bar type scale
+// One small, consistent set of fonts. Using these everywhere keeps the panel
+// from drifting into the mix of `.caption`, `.system(size: 11/12)` it had before.
+
+private extension Font {
+    /// App name in the header.
+    static let mbTitle   = Font.system(size: 15, weight: .semibold)
+    /// Standard row text (interface names, scene names, toggles).
+    static let mbBody    = Font.system(size: 12, weight: .regular)
+    /// Section labels ("RECORDING", "SCENES") and secondary captions.
+    static let mbCaption = Font.system(size: 11, weight: .medium)
+    /// Section headers — uppercased, tracked.
+    static let mbSection = Font.system(size: 10, weight: .semibold)
+    /// Numeric metric values (monospaced digits so they don't jitter).
+    static let mbMetric  = Font.system(size: 14, weight: .semibold, design: .rounded).monospacedDigit()
+    /// Tile labels under each metric.
+    static let mbTile    = Font.system(size: 9, weight: .semibold)
+}
+
+// MARK: - Liquid-Glass card
+
+private extension View {
+    /// Wraps a section in a subtle translucent card with a hairline border —
+    /// the layered, glassy grouping macOS 26 favours over bare dividers.
+    func mbCard() -> some View {
+        self
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(.primary.opacity(0.045))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .strokeBorder(.primary.opacity(0.06), lineWidth: 0.5)
+            )
+    }
+}
+
+// MARK: - Section header
+
+private struct MBSectionHeader: View {
+    let title: String
+    var body: some View {
+        Text(title)
+            .font(.mbSection)
+            .textCase(.uppercase)
+            .tracking(0.6)
+            .foregroundStyle(.secondary)
+    }
+}
+
+// MARK: - Metric tile
+
+/// One stat in the metrics card: a tinted glyph, a monospaced value and a
+/// tracked label. Three of these sit side by side, separated by hairlines.
+private struct MBStatTile: View {
+    let icon: String
+    let value: String
+    let label: String
+    var tint: Color = .secondary
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(tint)
+            Text(value)
+                .font(.mbMetric)
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(label)
+                .font(.mbTile)
+                .textCase(.uppercase)
+                .tracking(0.5)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - The panel
+
+/// The menu bar extra's window: status, quick open/settings, live metrics,
+/// recording control, scene recall, save-as, and launch-at-login.
 struct MenuBarPanel: View {
     @Environment(DaemonClient.self) private var client
     @EnvironmentObject private var updater: Updater
@@ -19,120 +108,241 @@ struct MenuBarPanel: View {
     @State private var loginTick = 0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // ── Status ────────────────────────────────────────────────
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 8, height: 8)
-                Text(statusLine)
-                    .font(.caption)
-                Spacer()
-            }
+        VStack(alignment: .leading, spacing: 14) {
+            header
+            metrics
+            quickActions
+            updates
+            recording
+            scenes
+            footer
+        }
+        .padding(14)
+        .frame(width: 300)
+    }
 
-            // ── Quick access ──────────────────────────────────────────
-            HStack(spacing: 8) {
-                Button { openMainWindow() } label: {
-                    Label("Open Hydra", systemImage: "macwindow")
-                }
-                SettingsLink {
-                    Label("Settings…", systemImage: "gearshape")
-                }
+    // ── Header ────────────────────────────────────────────────────────────
+    private var header: some View {
+        HStack(spacing: 10) {
+            BrandMark(size: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Hydra")
+                    .font(.mbTitle)
+                Text("v\(Hydra.versionString)")
+                    .font(.mbCaption)
+                    .foregroundStyle(.tertiary)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            Spacer()
+            statusPill
+        }
+    }
 
-            // ── Updates ───────────────────────────────────────────────
-            if let version = updater.availableVersion {
-                Button { updater.checkForUpdates() } label: {
-                    Label("Update to \(version)…", systemImage: "arrow.down.circle.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .help("A new version of Hydra is available")
-            } else {
-                Button { updater.checkForUpdates() } label: {
-                    Label("Check for Updates…", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
-                .font(.caption)
+    private var statusPill: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(statusColor)
+                .frame(width: 7, height: 7)
+            Text(statusShort)
+                .font(.mbCaption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(.primary.opacity(0.06), in: Capsule())
+        .help(statusLine)
+    }
+
+    // ── Live metrics ────────────────────────────────────────────────────────
+    @ViewBuilder
+    private var metrics: some View {
+        if let status = client.status, status.backplaneInstalled,
+           client.connectionState == .connected {
+            HStack(spacing: 0) {
+                MBStatTile(icon: "cpu",
+                           value: "\(Int((status.cpuLoad * 100).rounded()))%",
+                           label: "Load",
+                           tint: loadTint(LoadSeverity(load: status.cpuLoad)))
+                tileDivider
+                MBStatTile(icon: status.xruns == 0 ? "checkmark.circle" : "exclamationmark.triangle.fill",
+                           value: "\(status.xruns)",
+                           label: "XRUNs",
+                           tint: status.xruns == 0 ? .green : .red)
+                tileDivider
+                MBStatTile(icon: "arrow.left.arrow.right",
+                           value: "\(status.inputChannels)/\(status.outputChannels)",
+                           label: "In / Out",
+                           tint: .secondary)
             }
+            .mbCard()
+        }
+    }
 
-            // ── Recording (per interface) ─────────────────────────────
-            if !client.interfaces.isEmpty {
-                Divider()
-                Text("Recording")
-                    .font(.caption.weight(.semibold))
+    private var tileDivider: some View {
+        Rectangle()
+            .fill(.primary.opacity(0.08))
+            .frame(width: 0.5, height: 30)
+    }
+
+    // ── Quick access ──────────────────────────────────────────────────────
+    private var quickActions: some View {
+        HStack(spacing: 8) {
+            Button { openMainWindow() } label: {
+                Label("Open Hydra", systemImage: "macwindow")
+                    .frame(maxWidth: .infinity)
+            }
+            SettingsLink {
+                Label("Settings", systemImage: "gearshape")
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
+        .font(.mbBody)
+    }
+
+    // ── Updates ───────────────────────────────────────────────────────────
+    @ViewBuilder
+    private var updates: some View {
+        if let version = updater.availableVersion {
+            Button { updater.checkForUpdates() } label: {
+                Label("Update to \(version)", systemImage: "arrow.down.circle.fill")
+                    .font(.mbBody)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+            .help("A new version of Hydra is available")
+        } else {
+            Button { updater.checkForUpdates() } label: {
+                Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.mbCaption)
                     .foregroundStyle(.secondary)
-                ForEach(client.interfaces) { iface in
-                    let recording = client.recording(for: iface.id) != nil
-                    HStack(spacing: 8) {
-                        Image(systemName: recording ? "record.circle.fill" : "record.circle")
-                            .foregroundStyle(recording ? .red : .secondary)
-                        Text(iface.name)
-                            .font(.system(size: 12))
-                            .lineLimit(1)
-                        Spacer(minLength: 6)
-                        Button(recording ? "Stop" : "Record") {
-                            if recording { client.stopRecording(iface.id) }
-                            else         { client.startRecording(iface.id) }
-                        }
-                        .controlSize(.mini)
-                        .buttonStyle(.bordered)
-                        .tint(recording ? .red : .accentColor)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // ── Recording (per interface) ───────────────────────────────────────────
+    @ViewBuilder
+    private var recording: some View {
+        if !client.interfaces.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                MBSectionHeader(title: "Recording")
+                VStack(spacing: 8) {
+                    ForEach(client.interfaces) { iface in
+                        recordingRow(iface)
                     }
                 }
+                .mbCard()
             }
+        }
+    }
 
-            Divider()
+    @ViewBuilder
+    private func recordingRow(_ iface: VirtualInterfaceInfo) -> some View {
+        let rec = client.recording(for: iface.id)
+        let isRecording = rec != nil
+        HStack(spacing: 8) {
+            Image(systemName: isRecording ? "record.circle.fill" : "record.circle")
+                .font(.system(size: 12))
+                .foregroundStyle(isRecording ? .red : .secondary)
+                .symbolEffect(.pulse, isActive: isRecording)
+            Text(iface.name)
+                .font(.mbBody)
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            if isRecording, let rec {
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    Text(elapsed(since: rec.startedAt, now: ctx.date))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.red)
+                }
+            }
+            Button(isRecording ? "Stop" : "Record") {
+                if isRecording { client.stopRecording(iface.id) }
+                else           { client.startRecording(iface.id) }
+            }
+            .controlSize(.small)
+            .buttonStyle(.bordered)
+            .font(.mbCaption)
+            .tint(isRecording ? .red : .accentColor)
+        }
+    }
 
-            // ── Scenes ────────────────────────────────────────────────
-            Text("Scenes")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+    // ── Scenes ──────────────────────────────────────────────────────────────
+    private var scenes: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            MBSectionHeader(title: "Scenes")
+            VStack(spacing: 8) {
+                if client.scenes.isEmpty {
+                    Text("No scenes yet — patch the grid, then save the snapshot below.")
+                        .font(.mbCaption)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    VStack(spacing: 4) {
+                        ForEach(client.scenes) { scene in
+                            sceneRow(scene)
+                        }
+                    }
+                }
 
-            if client.scenes.isEmpty {
-                Text("No scenes yet — patch the grid, then save the snapshot below.")
+                HStack(spacing: 8) {
+                    TextField("Save current as…", text: $newSceneName)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                        .font(.mbBody)
+                        .onSubmit(saveScene)
+                    Button("Save", action: saveScene)
+                        .controlSize(.small)
+                        .font(.mbCaption)
+                        .disabled(newSceneName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .mbCard()
+        }
+    }
+
+    private func sceneRow(_ scene: PatchScene) -> some View {
+        HStack(spacing: 6) {
+            Button {
+                client.applyScene(scene.id)
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "square.grid.3x3.topleft.filled")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Text(scene.name)
+                        .font(.mbBody)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text("\(scene.connections.count)")
+                        .font(.mbCaption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Apply \"\(scene.name)\" — replaces the whole matrix atomically")
+
+            Button {
+                client.deleteScene(scene.id)
+            } label: {
+                Image(systemName: "trash")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
-            } else {
-                ForEach(client.scenes) { scene in
-                    HStack {
-                        Button {
-                            client.applyScene(scene.id)
-                        } label: {
-                            Label("\(scene.name) (\(scene.connections.count))",
-                                  systemImage: "square.grid.3x3.topleft.filled")
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Apply \"\(scene.name)\" — replaces the whole matrix atomically")
-
-                        Button {
-                            client.deleteScene(scene.id)
-                        } label: {
-                            Image(systemName: "trash")
-                                .foregroundStyle(.tertiary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Delete scene")
-                    }
-                }
             }
+            .buttonStyle(.plain)
+            .help("Delete scene")
+        }
+    }
 
-            HStack {
-                TextField("Save current as…", text: $newSceneName)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(saveScene)
-                Button("Save", action: saveScene)
-                    .disabled(newSceneName.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-
+    // ── Footer ──────────────────────────────────────────────────────────────
+    private var footer: some View {
+        VStack(spacing: 10) {
             Divider()
-
-            // ── Launch at login ───────────────────────────────────────
             Toggle("Launch Hydra at login", isOn: Binding(
                 get: { SMAppService.mainApp.status == .enabled },
                 set: { enable in
@@ -145,36 +355,62 @@ struct MenuBarPanel: View {
                 .id(loginTick)
                 .toggleStyle(.switch)
                 .controlSize(.small)
-                .font(.caption)
+                .font(.mbBody)
 
-            Divider()
-
-            // ── Footer ────────────────────────────────────────────────
             HStack {
-                Text("Hydra \(Hydra.versionString)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
                 Spacer()
                 Button("Quit Hydra") {
                     NSApplication.shared.terminate(nil)
                 }
-                .font(.caption)
+                .controlSize(.small)
+                .font(.mbCaption)
             }
         }
-        .padding(12)
-        .frame(width: 280)
+    }
+
+    // MARK: - Derived state
+
+    /// The four glanceable states, derived from connection + daemon status.
+    private var presence: EnginePresence {
+        EnginePresence(connected: client.connectionState == .connected,
+                       backplaneInstalled: client.status?.backplaneInstalled == true,
+                       engineRunning: client.status?.engineRunning == true)
     }
 
     private var statusColor: Color {
-        guard client.connectionState == .connected else { return .orange }
-        return client.status?.backplaneInstalled == true ? .green : .orange
+        switch presence {
+        case .offline, .noBackplane: return .orange
+        case .stopped:               return .yellow
+        case .running:               return .green
+        }
     }
 
+    /// Short label for the header pill.
+    private var statusShort: String { presence.shortLabel }
+
+    /// Long label (tooltip): engine state + sample rate + live connection count.
     private var statusLine: String {
         guard client.connectionState == .connected else { return "Daemon offline" }
         guard let status = client.status, status.backplaneInstalled else { return "Backplane not installed" }
-        return "\(status.engineRunning ? "Engine running" : "Engine stopped") · \(client.connections.count) connection(s)"
+        let rate = String(format: "%.0f kHz", status.sampleRate / 1000)
+        let engine = status.engineRunning ? "Engine running" : "Engine stopped"
+        return "\(engine) · \(rate) · \(client.connections.count) connection(s)"
     }
+
+    private func loadTint(_ severity: LoadSeverity) -> Color {
+        switch severity {
+        case .normal:   return .green
+        case .elevated: return .orange
+        case .critical: return .red
+        }
+    }
+
+    /// mm:ss (or h:mm:ss) since a recording started.
+    private func elapsed(since start: Date, now: Date) -> String {
+        formatElapsed(seconds: Int(now.timeIntervalSince(start)))
+    }
+
+    // MARK: - Actions
 
     /// Bring the main window forward (and the app, since the menu bar item may be
     /// clicked while another app is frontmost). Hydra launches as a menu-bar
