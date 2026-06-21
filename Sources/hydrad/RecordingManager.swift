@@ -10,6 +10,7 @@
 import Foundation
 import AVFoundation
 import HydraCore
+import HydraRT
 
 final class RecordingManager {
 

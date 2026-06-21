@@ -11,6 +11,7 @@ import Foundation
 import Synchronization
 import Network
 import HydraCore
+import HydraRT
 
 // MARK: - Local IPv4 (for SAP/SDP origin)
 

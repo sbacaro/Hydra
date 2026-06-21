@@ -127,10 +127,11 @@ if [ "$MODE" = "push" ]; then
 fi
 
 # ── Tag & let CI publish (full only) ───────────────────────────────────────
-git tag -d "$TAG" >/dev/null 2>&1 || true
-git push origin :refs/tags/"$TAG" >/dev/null 2>&1 || true
-run "Tag $TAG" git tag -a "$TAG" -m "$TITLE"
-run "Push tag $TAG (triggers CI build + publish)" git push origin "$TAG"
+# Force-recreate + force-push so re-cutting the same version is idempotent
+# (re-pointing the tag at the new commit) instead of failing on "already exists".
+git tag -fd "$TAG" >/dev/null 2>&1 || true
+run "Tag $TAG" git tag -fa "$TAG" -m "$TITLE"
+run "Push tag $TAG (triggers CI build + publish)" git push --force origin "$TAG"
 
 # The Release workflow (.github/workflows/release.yml) now builds the .pkg,
 # computes its SHA-256, and publishes both to the GitHub Release.
