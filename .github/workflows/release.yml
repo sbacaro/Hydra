@@ -43,11 +43,11 @@ jobs:
           sw_vers
           xcodebuild -version
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install xcodeproj gem
+        run: gem install xcodeproj --no-document
 
       - name: Generate Xcode project
-        run: xcodegen generate
+        run: ruby Scripts/generate_xcodeproj.rb
 
       - name: Build installer (.pkg)
         env:
@@ -75,6 +75,12 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Hydra ${{ steps.vars.outputs.version }}
           generate_release_notes: true
+          # Publish a real, non-draft, non-prerelease "latest" release. The
+          # in-app updater queries /releases/latest, which EXCLUDES drafts and
+          # prereleases — so these must stay false for updates to be seen.
+          draft: false
+          prerelease: false
+          make_latest: true
           files: |
             ${{ steps.vars.outputs.pkg }}
             ${{ steps.vars.outputs.sha }}

@@ -1,9 +1,9 @@
 name: CI
 
-# Build + unit-test gate. Runs on every push and PR. The Xcode project is
-# GENERATED from project.yml (XcodeGen), so CI regenerates it fresh rather than
-# trusting a committed .xcodeproj. (Scripts/generate_xcodeproj.rb is kept as a
-# fallback generator.)
+# Build + unit-test gate. Runs on every push and PR. CI regenerates the Xcode
+# project from Scripts/generate_xcodeproj.rb (the validated generator). A
+# declarative XcodeGen definition (project.yml) exists but must be validated on a
+# Mac before CI switches to it — see docs/BUILD.md.
 #
 # NOTE: the deployment target is macOS 26.0 (project.yml), so the runner MUST
 # ship the macOS 26 SDK / Xcode 26. `macos-latest` still resolves to macOS 15
@@ -36,11 +36,11 @@ jobs:
           sw_vers
           xcodebuild -version
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install xcodeproj gem
+        run: gem install xcodeproj --no-document
 
       - name: Generate Xcode project
-        run: xcodegen generate
+        run: ruby Scripts/generate_xcodeproj.rb
 
       # The HydraCore scheme bundles the HydraCoreTests target — this is the gate.
       - name: HydraCore unit tests
@@ -116,11 +116,11 @@ jobs:
           sw_vers
           xcodebuild -version
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install xcodeproj gem
+        run: gem install xcodeproj --no-document
 
       - name: Generate Xcode project
-        run: xcodegen generate
+        run: ruby Scripts/generate_xcodeproj.rb
 
       # Address + Undefined-Behavior sanitizers: catch buffer overruns, bad
       # pointer math (e.g. the ring's circular indexing) and UB.
