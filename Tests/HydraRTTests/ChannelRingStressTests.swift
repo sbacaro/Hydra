@@ -1,14 +1,25 @@
 // Hydra Audio — GPL-3.0
-// Real-time ring stress tests. `ChannelRing.swift` is compiled directly into
-// this bundle (see Scripts/generate_xcodeproj.rb), so the SPSC ring is exercised
-// for real — most valuably under ThreadSanitizer (atomic ordering between the
-// producer and consumer threads) and AddressSanitizer (the polyphase resampler's
-// circular-buffer indexing). Run via the HydraRTTests scheme.
+// Real-time ring stress tests against the HydraRT library — the SPSC ring is
+// exercised for real, most valuably under ThreadSanitizer (atomic ordering
+// between the producer and consumer threads) and AddressSanitizer (the polyphase
+// resampler's circular-buffer indexing). Run via the HydraRTTests scheme.
 
 import Testing
 import Foundation
-import Synchronization
 import HydraRT
+
+/// Thread-safe result flags shared by the producer/consumer closures. A class so
+/// it's shared by reference across the `@Sendable` closures — unlike a
+/// non-copyable `Atomic`, which Swift Testing's `#expect` can't capture.
+private final class StressResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var finiteFlag = true
+    private var signalFlag = false
+    func noteNonFinite() { lock.withLock { finiteFlag = false } }
+    func noteSignal()    { lock.withLock { signalFlag = true } }
+    var finite: Bool { lock.withLock { finiteFlag } }
+    var signal: Bool { lock.withLock { signalFlag } }
+}
 
 struct ChannelRingStressTests {
 
@@ -22,8 +33,7 @@ struct ChannelRingStressTests {
         nonisolated(unsafe) let ring = ChannelRing(channels: channels,
                                                    producerRate: 48_000,
                                                    consumerRate: 44_100) // decimation
-        let allFinite = Atomic<Bool>(true)
-        let sawSignal = Atomic<Bool>(false)
+        let result = StressResult()
 
         let blocks = 2_000
         let writeFrames = 256
@@ -56,16 +66,16 @@ struct ChannelRingStressTests {
                     ring.readResampled(into: $0.baseAddress!, frames: readFrames)
                 }
                 for v in out {
-                    if !v.isFinite { allFinite.store(false, ordering: .relaxed) }
-                    if v != 0 { sawSignal.store(true, ordering: .relaxed) }
+                    if !v.isFinite { result.noteNonFinite() }
+                    if v != 0 { result.noteSignal() }
                 }
             }
         }
 
         let outcome = group.wait(timeout: .now() + 120)
         #expect(outcome == .success)
-        #expect(allFinite.load(ordering: .relaxed))
-        #expect(sawSignal.load(ordering: .relaxed))
+        #expect(result.finite)
+        #expect(result.signal)
     }
 
     /// Single-threaded sanity on the real RT path (not the pure reference): a
