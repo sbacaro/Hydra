@@ -25,10 +25,18 @@ fail() { printf '\033[1;31m[release] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 # Check dependencies
 command -v git >/dev/null || fail "git is required but not installed."
-command -v gh >/dev/null || fail "gh (GitHub CLI) is required. Install with: brew install gh"
+
+# Resolve gh path (checks standard PATH first, then /opt/homebrew/bin/gh)
+if command -v gh >/dev/null; then
+    GH_BIN="gh"
+elif [ -f "/opt/homebrew/bin/gh" ]; then
+    GH_BIN="/opt/homebrew/bin/gh"
+else
+    fail "gh (GitHub CLI) is required. Install with: brew install gh"
+fi
 
 # Check GitHub auth status
-gh auth status >/dev/null || fail "You must be authenticated with the GitHub CLI (run: gh auth login)."
+$GH_BIN auth status >/dev/null || fail "You must be authenticated with the GitHub CLI (run: $GH_BIN auth login)."
 
 # 2. Git Commit and Push
 log "Staging all changes..."
@@ -78,10 +86,10 @@ if [ ! -s "$NOTES_FILE" ]; then
 fi
 
 # Create the release and upload the .pkg
-gh release create "$TAG" \
+$GH_BIN release create "$TAG" \
   --title "$TITLE" \
   --notes-file "$NOTES_FILE" \
   "$PKG_PATH"
 
 log "Release $TAG successfully published on GitHub!"
-log "Release page: $(gh release view "$TAG" --json url -q .url)"
+log "Release page: $($GH_BIN release view "$TAG" --json url -q .url)"
