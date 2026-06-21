@@ -9,7 +9,7 @@ NDI over the wire, scenes, recording and OSC remote control.
 [BlackHole](https://github.com/ExistentialAudio/BlackHole) driver (see
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)).
 
-Current version: **0.15.1 beta** (see [`CHANGELOG.md`](CHANGELOG.md)).
+Current version: **0.20.0 beta** (see [`CHANGELOG.md`](CHANGELOG.md)).
 Requires **macOS 26 (Tahoe)**. Full design notes:
 [`PROJETO_HYDRA_FUNDACAO.md`](docs/PROJETO_HYDRA_FUNDACAO.md).
 
@@ -20,16 +20,16 @@ Download the installer from the latest [GitHub release](https://github.com/sbaca
 
 ```bash
 # Download and install
-curl -L https://github.com/sbacaro/Hydra/releases/download/v0.15.1-beta/Hydra-0.15.1.pkg -o Hydra.pkg
+curl -L https://github.com/sbacaro/Hydra/releases/download/v0.20.0/Hydra-0.20.0.pkg -o Hydra.pkg
 open Hydra.pkg
 ```
 
 ### Manual Installation
-Download the [ZIP archive](https://github.com/sbacaro/Hydra/releases/download/v0.15.1-beta/Hydra-0.15.1-beta.zip) and run:
+Download the [ZIP archive](https://github.com/sbacaro/Hydra/releases/download/v0.20.0/Hydra-0.20.0.zip) and run:
 
 ```bash
-unzip Hydra-0.15.1-beta.zip
-cd Hydra-0.15.1-beta
+unzip Hydra-0.20.0.zip
+cd Hydra-0.20.0
 sudo bash install.sh
 ```
 
@@ -202,4 +202,4 @@ repository.
 
 ---
 
-**Latest Release:** [Hydra 0.15.1 beta](https://github.com/sbacaro/Hydra/releases/tag/v0.15.1-beta) · Released June 14, 2026
+**Latest Release:** [Hydra 0.20.0 beta](https://github.com/sbacaro/Hydra/releases/tag/v0.20.0) · Released June 20, 2026
