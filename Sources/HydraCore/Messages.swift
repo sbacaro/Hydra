@@ -78,13 +78,20 @@ public struct LevelsPayload: Codable, Sendable, Equatable {
     public var sourcePeaks: [Float]?
     /// Per-channel output peaks (linear), index = channel.
     public var destinationPeaks: [Float]?
+    /// Source-node channels that currently carry signal, as "nodeID:channel"
+    /// keys. Lets a transmitter's pin light from its OWN audio (app/device/NDI/…)
+    /// even when it isn't patched anywhere — the backplane peaks above only cover
+    /// the engine hub, not the per-node sources.
+    public var activeSources: [String]?
 
     public init(peaks: [String: Float],
                 sourcePeaks: [Float]? = nil,
-                destinationPeaks: [Float]? = nil) {
+                destinationPeaks: [Float]? = nil,
+                activeSources: [String]? = nil) {
         self.peaks = peaks
         self.sourcePeaks = sourcePeaks
         self.destinationPeaks = destinationPeaks
+        self.activeSources = activeSources
     }
 }
 
@@ -783,6 +790,96 @@ public struct EventsPayload: Codable, Sendable, Equatable {
     }
 }
 
+// MARK: - Bridges
+
+/// How a bridge is used in the grid — controls which direction(s) of its
+/// channels show (so an output-only bridge doesn't clutter the input axis).
+public enum BridgeRole: String, Codable, Sendable, CaseIterable {
+    case input    // capture INTO Hydra (its input channels appear as sources)
+    case output   // send OUT of Hydra (its output channels appear as destinations)
+    case both
+    public var showsInput: Bool  { self == .input  || self == .both }
+    public var showsOutput: Bool { self == .output || self == .both }
+}
+
+/// Runtime state of one fixed Hydra Audio Bridge (see `Hydra.bridgeCatalog`).
+/// Derived from the catalog spec plus live state (enabled by the user, present
+/// as a CoreAudio device).
+public struct BridgeInfo: Codable, Sendable, Equatable, Identifiable {
+    /// Matches `Hydra.BridgeSpec.id`.
+    public var id: String
+    public var name: String
+    public var channels: Int
+    /// User wants this bridge active (box acquired → device shown).
+    public var enabled: Bool
+    /// The CoreAudio device is currently visible in the system.
+    public var present: Bool
+    /// Which direction(s) to surface in the grid.
+    public var role: BridgeRole
+    /// Transmit this bridge's OUTPUT over NDI.
+    public var ndiTX: Bool
+    /// Transmit this bridge's OUTPUT over AES67.
+    public var aes67TX: Bool
+
+    public init(id: String, name: String, channels: Int,
+                enabled: Bool, present: Bool, role: BridgeRole = .both,
+                ndiTX: Bool = false, aes67TX: Bool = false) {
+        self.id = id
+        self.name = name
+        self.channels = channels
+        self.enabled = enabled
+        self.present = present
+        self.role = role
+        self.ndiTX = ndiTX
+        self.aes67TX = aes67TX
+    }
+
+    /// Grid node id for this bridge.
+    public var nodeID: String { Hydra.bridgeNodeID(id: id) }
+
+    // Tolerate older payloads (role/ndiTX/aes67TX default to off/.both).
+    private enum CodingKeys: String, CodingKey {
+        case id, name, channels, enabled, present, role, ndiTX, aes67TX
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        channels = try c.decode(Int.self, forKey: .channels)
+        enabled = try c.decode(Bool.self, forKey: .enabled)
+        present = try c.decode(Bool.self, forKey: .present)
+        role = try c.decodeIfPresent(BridgeRole.self, forKey: .role) ?? .both
+        ndiTX = try c.decodeIfPresent(Bool.self, forKey: .ndiTX) ?? false
+        aes67TX = try c.decodeIfPresent(Bool.self, forKey: .aes67TX) ?? false
+    }
+}
+
+public struct SetBridgeRolePayload: Codable, Sendable, Equatable {
+    public var id: String
+    public var role: BridgeRole
+    public init(id: String, role: BridgeRole) { self.id = id; self.role = role }
+}
+
+public struct SetBridgeNetworkTXPayload: Codable, Sendable, Equatable {
+    public var id: String
+    public var ndiTX: Bool
+    public var aes67TX: Bool
+    public init(id: String, ndiTX: Bool, aes67TX: Bool) {
+        self.id = id; self.ndiTX = ndiTX; self.aes67TX = aes67TX
+    }
+}
+
+public struct BridgesPayload: Codable, Sendable, Equatable {
+    public var bridges: [BridgeInfo]
+    public init(bridges: [BridgeInfo]) { self.bridges = bridges }
+}
+
+public struct SetBridgeEnabledPayload: Codable, Sendable, Equatable {
+    public var id: String
+    public var enabled: Bool
+    public init(id: String, enabled: Bool) { self.id = id; self.enabled = enabled }
+}
+
 // MARK: - Envelope
 
 /// All messages on the wire. Adding a case is a deliberate protocol change.
@@ -841,6 +938,12 @@ public enum WSMessage: Codable, Sendable {
     case deleteInterface(InterfaceRefPayload)
     case setInterfaceNDI(InterfaceNDIPayload)
     case setInterfaceAES67(InterfaceNDIPayload)
+
+    case getBridges
+    case bridges(BridgesPayload)
+    case setBridgeEnabled(SetBridgeEnabledPayload)
+    case setBridgeRole(SetBridgeRolePayload)
+    case setBridgeNetworkTX(SetBridgeNetworkTXPayload)
     // NDI
     case getNdi
     case ndi(NdiPayload)
@@ -869,6 +972,7 @@ public enum WSMessage: Codable, Sendable {
         case events, event
         case config, setConfig
         case getInterfaces, interfaces, createInterface, deleteInterface, setInterfaceNDI, setInterfaceAES67
+        case getBridges, bridges, setBridgeEnabled, setBridgeRole, setBridgeNetworkTX
         case getNdi, ndi, subscribeNdi
         case getModules, modules, subscribeModuleSource
         case getRecordings, recordings, startRecording, stopRecording
@@ -920,6 +1024,11 @@ public enum WSMessage: Codable, Sendable {
         case .deleteInterface:  self = .deleteInterface(try c.decode(InterfaceRefPayload.self, forKey: .payload))
         case .setInterfaceNDI:  self = .setInterfaceNDI(try c.decode(InterfaceNDIPayload.self, forKey: .payload))
         case .setInterfaceAES67: self = .setInterfaceAES67(try c.decode(InterfaceNDIPayload.self, forKey: .payload))
+        case .getBridges:       self = .getBridges
+        case .bridges:          self = .bridges(try c.decode(BridgesPayload.self, forKey: .payload))
+        case .setBridgeEnabled: self = .setBridgeEnabled(try c.decode(SetBridgeEnabledPayload.self, forKey: .payload))
+        case .setBridgeRole:    self = .setBridgeRole(try c.decode(SetBridgeRolePayload.self, forKey: .payload))
+        case .setBridgeNetworkTX: self = .setBridgeNetworkTX(try c.decode(SetBridgeNetworkTXPayload.self, forKey: .payload))
         case .getNdi:           self = .getNdi
         case .ndi:              self = .ndi(try c.decode(NdiPayload.self, forKey: .payload))
         case .subscribeNdi:     self = .subscribeNdi(try c.decode(SubscribeNdiPayload.self, forKey: .payload))
@@ -984,6 +1093,11 @@ public enum WSMessage: Codable, Sendable {
         case .deleteInterface(let p):   try put(.deleteInterface, p)
         case .setInterfaceNDI(let p):   try put(.setInterfaceNDI, p)
         case .setInterfaceAES67(let p): try put(.setInterfaceAES67, p)
+        case .getBridges:               try put(.getBridges)
+        case .bridges(let p):           try put(.bridges, p)
+        case .setBridgeEnabled(let p):  try put(.setBridgeEnabled, p)
+        case .setBridgeRole(let p):     try put(.setBridgeRole, p)
+        case .setBridgeNetworkTX(let p): try put(.setBridgeNetworkTX, p)
         case .getNdi:                   try put(.getNdi)
         case .ndi(let p):               try put(.ndi, p)
         case .subscribeNdi(let p):      try put(.subscribeNdi, p)

@@ -55,7 +55,7 @@ struct AboutView: View {
                     section("Third-party components") {
                         credit(
                             name: "BlackHole — Existential Audio Inc.",
-                            detail: "The \"Hydra Virtual Soundcard\" backplane is a customized BlackHole driver. GPL-3.0, same as Hydra.",
+                            detail: "The Hydra Engine backplane is a customized BlackHole driver. GPL-3.0, same as Hydra.",
                             url: "https://github.com/ExistentialAudio/BlackHole")
                         credit(
                             name: "VST 3 SDK — Steinberg Media Technologies GmbH",
@@ -90,7 +90,7 @@ struct AboutView: View {
 
     // MARK: - Helpers
 
-    private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+    private func section(_ title: LocalizedStringKey, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.headline)
@@ -100,7 +100,7 @@ struct AboutView: View {
         }
     }
 
-    private func credit(name: String, detail: String, url: String) -> some View {
+    private func credit(name: String, detail: LocalizedStringKey, url: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             if let link = URL(string: url) {
                 Link(name, destination: link)

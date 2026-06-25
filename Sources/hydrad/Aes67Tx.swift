@@ -62,27 +62,39 @@ final class Aes67Tx: @unchecked Sendable {
     private let ssrc: UInt32 = .random(in: 0...UInt32.max)
     private let originIP: String
 
-    /// One 8-channel flow (slice `flowIndex`) of the interface's Out side.
-    init?(interface iface: VirtualInterfaceInfo, flowIndex: Int, rate: Double) {
+    /// Deterministic UUID from a bridge id (fills the 16 bytes from the id text),
+    /// stable across runs unlike Swift's randomized Hasher.
+    static func stableUUID(for id: String) -> UUID {
+        var b = [UInt8](repeating: 0, count: 16)
+        for (i, byte) in "hydra-bridge-\(id)".utf8.prefix(16).enumerated() { b[i] = byte }
+        return UUID(uuid: (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+                           b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]))
+    }
+
+    /// One 8-channel flow (slice `flowIndex`) of a bridge's OUTPUT.
+    init?(bridge: BridgeInfo, flowIndex: Int, rate: Double) {
         let start = flowIndex * 8
-        let channels = min(iface.outChannels - start, 8)
+        let channels = min(bridge.channels - start, 8)
         guard channels > 0 else { return nil }
-        // Flow name carries the channel range when the interface spans
-        // several flows ("Stage 1\u{2013}8", "Stage 9\u{2013}16", …).
-        let name = iface.outChannels <= 8
-            ? iface.name
-            : "\(iface.name) \(start + 1)\u{2013}\(start + channels)"
-        // Deterministic multicast group from the interface identity + slice
-        // (239.69.x.y — the AES67 convention range).
-        let bytes = [UInt8](iface.id.uuidString.utf8)
-        let x = max(1, bytes[0] % 254)
-        let y = max(1, UInt8((Int(bytes[1]) + flowIndex) % 254))
+        // Flow name carries the channel range when the bridge spans several flows.
+        let name = bridge.channels <= 8
+            ? bridge.name
+            : "\(bridge.name) \(start + 1)\u{2013}\(start + channels)"
+        // Stable UUID from the bridge id (Swift's Hasher is per-run randomized),
+        // so the flow key/session id stays consistent across syncTx calls.
+        let uuid = Aes67Tx.stableUUID(for: bridge.id)
+        // Deterministic multicast group (239.69.x.y — AES67 convention range).
+        let ub = uuid.uuid
+        let x = max(1, ub.0 % 254)
+        let y = max(1, UInt8((Int(ub.1) + flowIndex) % 254))
         let address = "239.69.\(x).\(y)"
 
-        self.info = Aes67TxInfo(interfaceID: iface.id, name: name,
+        self.info = Aes67TxInfo(interfaceID: uuid, name: name,
                                 channels: channels, address: address, port: 5004,
                                 flowIndex: flowIndex)
-        self.tap = PoolTxTap(base: iface.outBase + start, channels: channels, rate: rate)
+        // Node-sourced: read this flow's 8-ch slice of the bridge output staging.
+        self.tap = PoolTxTap(base: start, channels: channels, rate: rate,
+                             sourceNodeID: bridge.nodeID)
         self.sampleRate = rate
         self.originIP = localIPv4Address()
         pcm = .allocate(capacity: packetFrames * channels)
@@ -269,25 +281,25 @@ final class Aes67TxManager {
 
     /// Rebinds transmitters to the current interface list. Interfaces wider
     /// than 8 channels are announced as several flows (the AES67 limit).
-    func syncTx(interfaces: [VirtualInterfaceInfo]) {
+    func syncTx(bridges: [BridgeInfo]) {
         var changed = false
         queue.sync {
             let rate = BackplaneProbe.backplaneDeviceID()
                 .map(BackplaneProbe.nominalSampleRate) ?? Hydra.defaultSampleRate
-            // Desired flows: (key, interface, flowIndex).
-            var wanted: [String: (iface: VirtualInterfaceInfo, flow: Int)] = [:]
-            for iface in interfaces where iface.aes67TX && iface.outChannels > 0 {
-                let flowCount = (iface.outChannels + 7) / 8
+            // Desired flows: (key, bridge, flowIndex).
+            var wanted: [String: (bridge: BridgeInfo, flow: Int)] = [:]
+            for bridge in bridges where bridge.aes67TX && bridge.channels > 0 {
+                let flowCount = (bridge.channels + 7) / 8
                 for flow in 0..<flowCount {
-                    wanted["\(iface.id.uuidString):\(flow)"] = (iface, flow)
+                    wanted["\(bridge.id):\(flow)"] = (bridge, flow)
                 }
             }
 
             for (key, tx) in senders {
-                if let (iface, flow) = wanted[key] {
+                if let (bridge, flow) = wanted[key] {
                     let start = flow * 8
-                    let channels = min(iface.outChannels - start, 8)
-                    if iface.outBase + start == tx.tap.base && channels == tx.tap.channels {
+                    let channels = min(bridge.channels - start, 8)
+                    if start == tx.tap.base && channels == tx.tap.channels {
                         continue   // unchanged
                     }
                 }
@@ -296,7 +308,7 @@ final class Aes67TxManager {
                 changed = true
             }
             for (key, want) in wanted where senders[key] == nil {
-                if let tx = Aes67Tx(interface: want.iface, flowIndex: want.flow, rate: rate) {
+                if let tx = Aes67Tx(bridge: want.bridge, flowIndex: want.flow, rate: rate) {
                     senders[key] = tx
                     changed = true
                 }

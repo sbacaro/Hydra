@@ -46,3 +46,31 @@ struct SearchField: NSViewRepresentable {
         }
     }
 }
+
+// MARK: - Fuzzy matching
+
+extension StringProtocol {
+    /// Case- and diacritic-insensitive fuzzy match. The query is split into
+    /// whitespace tokens; each token must appear as an in-order subsequence of the
+    /// receiver, but tokens may match in ANY order and anywhere. So word order and
+    /// extra spaces stop mattering: "fbpro", "proq fab" and "fab proq" all find
+    /// "FabFilter Pro-Q", and "cheq" finds "Channel EQ". Empty query matches all.
+    func fuzzyMatches(_ query: String) -> Bool {
+        func fold(_ s: String) -> [Character] {
+            Array(s.folding(options: [.caseInsensitive, .diacriticInsensitive],
+                            locale: .current))
+        }
+        let tokens = query.split(whereSeparator: \.isWhitespace).map { fold(String($0)) }
+        guard !tokens.isEmpty else { return true }
+        let hay = fold(String(self)).filter { !$0.isWhitespace }
+        for needle in tokens where !needle.isEmpty {
+            var n = 0
+            for ch in hay where ch == needle[n] {
+                n += 1
+                if n == needle.count { break }
+            }
+            if n != needle.count { return false }
+        }
+        return true
+    }
+}

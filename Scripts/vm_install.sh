@@ -65,7 +65,7 @@ install_ndi_runtime() {
 
 do_install() {
     [[ -d "$DIST_DIR/$DRIVER_NAME.driver" ]] || fail "dist/ not found or incomplete — run ./Scripts/host_build.sh on the host first"
-    [[ -f "$DIST_DIR/hydrad" && -f "$DIST_DIR/HydraApp" ]] || fail "binaries missing in dist/"
+    [[ -f "$DIST_DIR/HydraApp" && -f "$DIST_DIR/hydra-plugin-host" ]] || fail "binaries missing in dist/"
 
     log "Installing driver to $HAL_DIR (sudo required) ..."
     sudo rm -rf "$HAL_DIR/$DRIVER_NAME.driver"
@@ -76,9 +76,11 @@ do_install() {
 
     log "Installing binaries to $INSTALL_DIR (local disk) ..."
     sudo mkdir -p "$INSTALL_DIR"
-    sudo cp "$DIST_DIR/hydrad" "$DIST_DIR/HydraApp" "$INSTALL_DIR/"
-    sudo chmod +x "$INSTALL_DIR/hydrad" "$INSTALL_DIR/HydraApp"
-    sudo xattr -d com.apple.quarantine "$INSTALL_DIR/hydrad" "$INSTALL_DIR/HydraApp" 2>/dev/null || true
+    # HydraApp now contains the audio engine; hydra-plugin-host sits beside it so
+    # RemotePluginHost.defaultHostURL() finds it as a sibling executable.
+    sudo cp "$DIST_DIR/HydraApp" "$DIST_DIR/hydra-plugin-host" "$INSTALL_DIR/"
+    sudo chmod +x "$INSTALL_DIR/HydraApp" "$INSTALL_DIR/hydra-plugin-host"
+    sudo xattr -d com.apple.quarantine "$INSTALL_DIR/HydraApp" "$INSTALL_DIR/hydra-plugin-host" 2>/dev/null || true
 
     install_ndi_runtime
 
@@ -94,9 +96,8 @@ do_install() {
     [[ -f "$DIST_DIR/BUILD_INFO.txt" ]] && { log "Build:"; sed 's/^/    /' "$DIST_DIR/BUILD_INFO.txt"; }
 
     log "Phase 1 test:"
-    log "  terminal 1:  $INSTALL_DIR/hydrad"
-    log "  terminal 2:  $INSTALL_DIR/HydraApp"
-    log "Expected: app shows Daemon: Connected + Backplane 256 in / 256 out."
+    log "  run:  $INSTALL_DIR/HydraApp     (engine runs in-process — one process)"
+    log "Expected: app shows Engine: Connected + Backplane 256 in / 256 out."
 }
 
 do_uninstall() {
@@ -123,7 +124,7 @@ do_status() {
     else
         log "NDI runtime: NOT installed (NDI features off)"
     fi
-    for bin in hydrad HydraApp; do
+    for bin in HydraApp hydra-plugin-host; do
         if [[ -x "$INSTALL_DIR/$bin" ]]; then
             log "Binary: $INSTALL_DIR/$bin OK"
         else

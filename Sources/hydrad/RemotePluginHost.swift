@@ -286,16 +286,16 @@ final class RemotePluginHost: @unchecked Sendable {
         }
         let exeDir = URL(fileURLWithPath: CommandLine.arguments[0])
             .resolvingSymlinksInPath().deletingLastPathComponent()
-        // exeDir layouts:
-        //   • SwiftPM:  .build/<cfg>/hydrad           → sibling executable
-        //   • Shipped:  …/Helpers/hydrad.app/Contents/MacOS/hydrad
-        //               → …/Helpers/hydra-plugin-host.app/Contents/MacOS/hydra-plugin-host
-        let helpers = exeDir.deletingLastPathComponent()   // …/Contents
-            .deletingLastPathComponent()                   // …/hydrad.app
-            .deletingLastPathComponent()                   // …/Helpers
+        // Layouts:
+        //   • SwiftPM:  .build/<cfg>/Hydra            → sibling executable
+        //   • Shipped:  the engine runs inside Hydra.app, with hydra-plugin-host
+        //              embedded at Hydra.app/Contents/Library/Helpers/
+        //              hydra-plugin-host.app/Contents/MacOS/hydra-plugin-host
+        let appHelpers = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Library/Helpers")
         let candidates = [
             exeDir.appendingPathComponent("hydra-plugin-host"),
-            helpers.appendingPathComponent("hydra-plugin-host.app/Contents/MacOS/hydra-plugin-host"),
+            appHelpers.appendingPathComponent("hydra-plugin-host.app/Contents/MacOS/hydra-plugin-host"),
         ]
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }

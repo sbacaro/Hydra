@@ -14,6 +14,10 @@ public enum PatchValidation {
         if point.nodeID == Hydra.backplaneNodeID {
             return (0..<Hydra.backplaneChannels).contains(point.channelIndex)
         }
+        if let id = Hydra.bridgeID(fromNodeID: point.nodeID) {
+            let channels = Hydra.bridgeSpec(id: id)?.channels ?? 0
+            return (0..<channels).contains(point.channelIndex)
+        }
         if Hydra.deviceUID(fromNodeID: point.nodeID) != nil {
             return (0..<Hydra.maxDeviceChannels).contains(point.channelIndex)
         }
@@ -47,18 +51,23 @@ public enum PatchValidation {
     ///   - new: the edge about to be added.
     ///   - existing: the connections already in the matrix.
     /// - Returns: true if adding `new` would create a cycle.
+    /// A loopback node (the engine hub OR any Hydra Audio Bridge) feeds its
+    /// Out n back into its In n, so a same-node cycle howls. Other nodes can't.
+    public static func isLoopbackNode(_ nodeID: String) -> Bool {
+        nodeID == Hydra.backplaneNodeID || Hydra.bridgeID(fromNodeID: nodeID) != nil
+    }
+
     public static func wouldFeedback(adding new: Connection,
                                      existing: [Connection]) -> Bool {
-        guard new.source.nodeID == Hydra.backplaneNodeID,
-              new.destination.nodeID == Hydra.backplaneNodeID else { return false }
+        let node = new.source.nodeID
+        guard node == new.destination.nodeID, isLoopbackNode(node) else { return false }
         let s = new.source.channelIndex
         let d = new.destination.channelIndex
         if s == d { return true }
 
         var adjacency: [Int: [Int]] = [:]
         for c in existing
-        where c.source.nodeID == Hydra.backplaneNodeID
-           && c.destination.nodeID == Hydra.backplaneNodeID {
+        where c.source.nodeID == node && c.destination.nodeID == node {
             adjacency[c.source.channelIndex, default: []].append(c.destination.channelIndex)
         }
         // Is there already a path from d back to s? If so, s→d closes a loop.

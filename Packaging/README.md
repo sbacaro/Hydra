@@ -2,8 +2,8 @@
 
 Builds a macOS installer that places **Hydra.app** in `/Applications` and the
 **Hydra Virtual Soundcard** driver in `/Library/Audio/Plug-Ins/HAL`, then
-reloads `coreaudiod` so the device appears immediately. `hydrad` is embedded in
-the app and registers itself as a LaunchAgent on first launch.
+reloads `coreaudiod` so the device appears immediately. The audio engine runs
+in-process inside Hydra.app (no separate daemon / LaunchAgent).
 
 ```
 Packaging/

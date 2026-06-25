@@ -20,12 +20,17 @@ struct InspectorView: View {
     @Environment(DaemonClient.self) private var client
     @Binding var selection: GridSelection?
     @Binding var channelFocus: ChannelFocus?
+    @Binding var selectedBridge: String?
+
+    private var bridge: BridgeInfo? {
+        selectedBridge.flatMap { id in client.bridges.first { $0.id == id } }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Header — flush with the inspector chrome.
             HStack {
-                Text("Channel")
+                Text(bridge != nil ? "Bridge" : "Channel")
                     .font(.headline)
                 Spacer()
             }
@@ -34,9 +39,10 @@ struct InspectorView: View {
 
             Divider()
 
-            // Content — a selected cross-point shows both ends; a clicked channel
-            // name shows that single channel's strip.
-            if let sel = selection {
+            // Bridge config (sidebar selection) takes priority, then cell/channel.
+            if let bridge {
+                ScrollView { BridgeInspector(bridge: bridge).padding(16) }
+            } else if let sel = selection {
                 ScrollView {
                     ChannelStrip(selection: sel, clearSelection: { selection = nil })
                         .padding(16)
@@ -50,12 +56,94 @@ struct InspectorView: View {
                 ContentUnavailableView {
                     Label("No Selection", systemImage: "rectangle.dashed")
                 } description: {
-                    Text("Click a cell, or a channel's name, to open its channel strip.")
+                    Text("Select a bridge, a cell, or a channel's name to configure it.")
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+// MARK: - Bridge inspector (selected in the sidebar)
+
+/// Per-bridge configuration: grid direction + network transmit, grouped like
+/// System Settings. The sidebar is navigation; this is the detail.
+private struct BridgeInspector: View {
+    @Environment(DaemonClient.self) private var client
+    let bridge: BridgeInfo
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // Title block.
+            HStack(spacing: 12) {
+                Image(systemName: "cable.connector")
+                    .font(.system(size: 22))
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(bridge.name)
+                        .font(.headline)
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(bridge.present ? Color.green : Color.secondary)
+                            .frame(width: 7, height: 7)
+                        Text(bridge.present
+                             ? "Active · \(bridge.channels) in · \(bridge.channels) out"
+                             : "Activating…")
+                            .font(.caption)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            // Direction in the grid.
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Direction in grid")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("", selection: Binding(
+                    get: { bridge.role },
+                    set: { client.setBridgeRole(bridge.id, role: $0) })) {
+                    Text("Input").tag(BridgeRole.input)
+                    Text("Output").tag(BridgeRole.output)
+                    Text("Both").tag(BridgeRole.both)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+
+            // Network output — grouped inset list (System Settings style).
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Network output")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                VStack(spacing: 0) {
+                    Toggle(isOn: Binding(
+                        get: { bridge.ndiTX },
+                        set: { client.setBridgeNetworkTX(bridge.id, ndiTX: $0, aes67TX: bridge.aes67TX) })) {
+                        Label("Transmit over NDI", systemImage: "antenna.radiowaves.left.and.right")
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 9)
+                    Divider()
+                    Toggle(isOn: Binding(
+                        get: { bridge.aes67TX },
+                        set: { client.setBridgeNetworkTX(bridge.id, ndiTX: bridge.ndiTX, aes67TX: $0) })) {
+                        Label("Transmit over AES67", systemImage: "network")
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 9)
+                }
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary, lineWidth: 0.5))
+            }
+
+            Text("Any app can select \(bridge.name) as its input or output.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 0)
+        }
     }
 }
 
@@ -180,6 +268,10 @@ private struct InsertsSection: View {
                     var updated = strip
                     updated.inserts.append(plugin)
                     client.setStrip(updated)
+                    // Open the new insert's editor immediately — adding a plugin
+                    // should show its window (setStrip + openEditor run in order on
+                    // the daemon's serial queue, so the instance exists by then).
+                    client.openPluginEditor(stripID: strip.id, index: updated.inserts.count - 1)
                     pickerPresented = false
                 }
                 .environment(client)
@@ -336,6 +428,8 @@ private struct ChannelStrip: View {
                         var updated = strip
                         updated.inserts.append(plugin)
                         client.setStrip(updated)
+                        // Open the new insert's editor immediately (see note above).
+                        client.openPluginEditor(stripID: strip.id, index: updated.inserts.count - 1)
                         pickerSlotPresented = false
                     }
                     .environment(client)
@@ -462,10 +556,11 @@ private struct PluginPicker: View {
 
     private var filtered: [VSTPlugin] {
         let base  = client.vst.pickerPlugins()
-        let query = search.trimmingCharacters(in: .whitespaces).lowercased()
+        let query = search.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return base }
+        // Forgiving, order-independent fuzzy match over name + vendor + category.
         return base.filter {
-            $0.name.lowercased().contains(query) || $0.vendor.lowercased().contains(query)
+            "\($0.name) \($0.vendor) \($0.category)".fuzzyMatches(query)
         }
     }
 

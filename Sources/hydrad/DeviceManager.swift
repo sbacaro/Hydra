@@ -19,7 +19,10 @@ final class DeviceIO {
     let inChannels: Int
     let outChannels: Int
     let sampleRate: Double
-    var nodeID: String { Hydra.deviceNodeID(uid: uid) }
+    /// Grid node id. Generic physical devices use `dev:<uid>`; Hydra Audio
+    /// Bridges pass an explicit `bridge:<id>` so they read as first-class nodes.
+    private let nodeIDOverride: String?
+    var nodeID: String { nodeIDOverride ?? Hydra.deviceNodeID(uid: uid) }
 
     /// Device clock → engine clock (read by the engine's IOProc).
     let inRing: ChannelRing?
@@ -36,13 +39,14 @@ final class DeviceIO {
 
     init(uid: String, name: String, deviceID: AudioObjectID,
          inChannels: Int, outChannels: Int,
-         sampleRate: Double, engineRate: Double) {
+         sampleRate: Double, engineRate: Double, nodeID: String? = nil) {
         self.uid = uid
         self.name = name
         self.deviceID = deviceID
         self.inChannels = inChannels
         self.outChannels = outChannels
         self.sampleRate = sampleRate
+        self.nodeIDOverride = nodeID
 
         if inChannels > 0 {
             inRing = ChannelRing(channels: inChannels,
@@ -213,6 +217,9 @@ final class DeviceManager {
                   // Hydra's own tap plumbing (private aggregates) is not a
                   // user-facing device.
                   !uid.hasPrefix(Hydra.internalAggregateUIDPrefix),
+                  // Hydra Audio Bridges are first-class nodes (BridgeManager),
+                  // not generic physical devices — keep them out of this list.
+                  !Hydra.isBridgeUID(uid),
                   !name.hasPrefix("Hydra Tap (") else { return nil }
             let inCh = BackplaneProbe.channelCount(id, scope: kAudioDevicePropertyScopeInput)
             let outCh = BackplaneProbe.channelCount(id, scope: kAudioDevicePropertyScopeOutput)

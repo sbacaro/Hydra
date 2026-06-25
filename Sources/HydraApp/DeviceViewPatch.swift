@@ -54,6 +54,36 @@ struct DeviceViewPatch: View {
         destinations.first { $0.id == deviceID } ?? destinations.first
     }
 
+    /// The Picker's selection always resolves to a real device id (the chosen
+    /// one, else the first), so it never sits on the empty "" sentinel — which
+    /// has no matching tag and made SwiftUI log "selection … is invalid".
+    private var deviceSelection: Binding<String> {
+        Binding(get: { device?.id ?? "" }, set: { deviceID = $0 })
+    }
+
+    // Fixed table columns so the header and every row line up exactly.
+    private let channelColWidth: CGFloat = 90
+    private let signalColWidth:  CGFloat = 54
+
+    /// Strips the redundant device name from a channel's full label. The device
+    /// is already named once — in the picker (left) or the group header (right) —
+    /// so each row only needs what's left: "1", "20", "L"… Apple doesn't repeat
+    /// the same context on every row. Falls back to the full label if absent.
+    private func channelTag(_ label: String, within groupLabel: String) -> String {
+        guard !groupLabel.isEmpty, label.hasPrefix(groupLabel) else { return label }
+        let rest = label.dropFirst(groupLabel.count).trimmingCharacters(in: .whitespaces)
+        return rest.isEmpty ? label : rest
+    }
+
+    /// Row background: drop target → selection → faint zebra band on odd rows
+    /// (Finder/Numbers scannability) → clear. One source of truth so the states
+    /// compose instead of stacking translucent fills.
+    private func rowFill(row: Int, selected: Bool, drop: Bool) -> Color {
+        if drop { return Color.accentColor.opacity(0.22) }
+        if selected { return Color.accentColor.opacity(0.16) }
+        return row.isMultiple(of: 2) ? .clear : Theme.Grid.rowBand
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             receivePane
@@ -76,10 +106,10 @@ struct DeviceViewPatch: View {
     private var receivePane: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text("Receive Channels")
-                    .font(.system(size: 13, weight: .semibold))
+                Text("Receive channels")
+                    .font(.headline)
                 Spacer()
-                Picker("Device", selection: $deviceID) {
+                Picker("Device", selection: deviceSelection) {
                     ForEach(destinations.indices, id: \.self) { index in
                         let group = destinations[index]
                         Label(group.label, systemImage: group.icon).tag(group.id)
@@ -90,19 +120,24 @@ struct DeviceViewPatch: View {
             }
 
             HStack(spacing: 0) {
-                Text("Channel").frame(width: 130, alignment: .leading)
-                Text("Connected to").frame(maxWidth: .infinity, alignment: .leading)
-                Text("Signal").frame(width: 46)
+                Text("Channel")
+                    .frame(width: channelColWidth, alignment: .leading)
+                    .padding(.leading, 10)
+                Divider()
+                Text("Connected to")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 10)
+                Text("Signal").frame(width: signalColWidth)
             }
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(Theme.Grid.textTertiary)
-            .padding(.horizontal, 8)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(height: 22)
 
             ScrollView {
-                VStack(spacing: 1) {
+                LazyVStack(spacing: 0) {
                     if let device {
-                        ForEach(device.entries) { entry in
-                            receiveRow(entry, in: device.entries)
+                        ForEach(Array(device.entries.enumerated()), id: \.element.id) { row, entry in
+                            receiveRow(entry, in: device.entries, row: row)
                         }
                     }
                 }
@@ -112,6 +147,7 @@ struct DeviceViewPatch: View {
                 Button("Unsubscribe") {
                     unsubscribeSelected()
                 }
+                .buttonStyle(.bordered)
                 .keyboardShortcut(.delete, modifiers: [])
                 .disabled(!selectedReceiveHasConnections)
                 .help("Removes the patches of the selected receive channels (\u{2318}/\u{21E7}-click selects several) — or press \u{232B}")
@@ -121,41 +157,44 @@ struct DeviceViewPatch: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func receiveRow(_ entry: GridEntry, in channels: [GridEntry]) -> some View {
+    private func receiveRow(_ entry: GridEntry, in channels: [GridEntry], row: Int) -> some View {
         let isSelected = selectedReceiveIDs.contains(entry.id)
         let connectedSources = sourcesConnected(to: entry)
+        let tag = channelTag(entry.label, within: device?.label ?? "")
         return Button {
             handleRowClick(entry, in: channels)
         } label: {
             HStack(spacing: 0) {
-                HStack(spacing: 6) {
-                    Image(systemName: "headphones")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Theme.Grid.textTertiary)
-                    Text(entry.label)
-                        .font(.system(size: 13))
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.Grid.textPrimary)
-                        .lineLimit(1)
-                }
-                .frame(width: 130, alignment: .leading)
-
-                Text(connectedSources.map(\.label).joined(separator: ", "))
-                    .font(.system(size: 12))
+                Text(tag)
+                    .font(.callout)
                     .monospacedDigit()
-                    .foregroundStyle(connectedSources.isEmpty ? Theme.Grid.textTertiary : Theme.accent)
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(width: channelColWidth, alignment: .leading)
+                    .padding(.leading, 10)
+
+                Divider()
+
+                Group {
+                    if connectedSources.isEmpty {
+                        Text("—").foregroundStyle(.quaternary)
+                    } else {
+                        Text(connectedSources.map(\.label).joined(separator: ", "))
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
+                .font(.subheadline)
+                .monospacedDigit()
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 10)
 
                 SignalDotPublic(nodeID: entry.nodeID, channel: entry.channel, output: true)
-                    .frame(width: 46)
+                    .frame(width: signalColWidth)
             }
-            .padding(.horizontal, 8)
-            .frame(height: 26)
-            .background(RoundedRectangle(cornerRadius: 5)
-                .fill(dropTargetID == entry.id ? Theme.accent.opacity(0.28)
-                      : isSelected ? Theme.accent.opacity(0.18) : Theme.Grid.cellRest))
+            .frame(height: 28)
+            .background(rowFill(row: row, selected: isSelected, drop: dropTargetID == entry.id))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -220,8 +259,8 @@ struct DeviceViewPatch: View {
 
     private var availablePane: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Available Channels")
-                .font(.system(size: 13, weight: .semibold))
+            Text("Available channels")
+                .font(.headline)
             SearchField(text: $filter, prompt: "Filter")
 
             ScrollView {
@@ -242,24 +281,24 @@ struct DeviceViewPatch: View {
                             HStack(spacing: 5) {
                                 if collapseByDevice {
                                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                                        .font(.system(size: 8.5, weight: .bold))
-                                        .foregroundStyle(Theme.Grid.textTertiary)
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(.tertiary)
                                 }
                                 Image(systemName: group.icon)
-                                    .font(.system(size: 10))
+                                    .font(.caption)
                                 Text(group.label)
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.subheadline.weight(.medium))
                                     .lineLimit(1)
                                 Spacer(minLength: 0)
                             }
-                            .foregroundStyle(Theme.Grid.textSecondary)
+                            .foregroundStyle(.secondary)
                             .padding(.top, 4)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         if isExpanded {
                             ForEach(group.entries) { entry in
-                                sourceRow(entry)
+                                sourceRow(entry, within: group.label)
                             }
                         }
                     }
@@ -268,42 +307,45 @@ struct DeviceViewPatch: View {
 
             if !selectedSourceIDs.isEmpty {
                 Text("\(selectedSourceIDs.count) selected — drag onto a receive channel; they land in sequence")
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             } else {
                 Text("Select channels (\u{21E7} for a range) and DRAG them onto a receive channel — they land in sequence. \u{232B} removes the selected rows' patches.")
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.tertiary)
             }
         }
         .frame(width: 250)
     }
 
-    private func sourceRow(_ entry: GridEntry) -> some View {
+    private func sourceRow(_ entry: GridEntry, within groupLabel: String) -> some View {
         let isSelected = selectedSourceIDs.contains(entry.id)
+        let tag = channelTag(entry.label, within: groupLabel)
         return Button {
             handleSourceClick(entry)
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "waveform")
-                    .font(.system(size: 9))
-                    .foregroundStyle(Theme.Grid.textTertiary)
-                Text(entry.label)
-                    .font(.system(size: 13))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, collapseByDevice ? 14 : 0)
+                Text(tag)
+                    .font(.callout)
                     .monospacedDigit()
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Theme.accent)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
                 }
             }
             .padding(.horizontal, 8)
-            .frame(height: 24)
-            .background(RoundedRectangle(cornerRadius: 5)
-                .fill(isSelected ? Theme.accent.opacity(0.18) : .clear))
+            .frame(height: 26)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(isSelected ? Color.accentColor.opacity(0.14) : Color.clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -444,6 +486,9 @@ struct SignalDotPublic: View {
         if nodeID == Hydra.backplaneNodeID {
             let flags = output ? signals.outputs : signals.inputs
             hasSignal = channel < flags.count && flags[channel]
+        } else if !output {
+            // Source pin: light from the source's own audio, no patch required.
+            hasSignal = signals.sources.contains("\(nodeID):\(channel)")
         } else {
             hasSignal = connIDs.contains { (meters.peaks[$0] ?? 0) > DaemonClient.signalThreshold }
         }

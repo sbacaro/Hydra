@@ -1,17 +1,18 @@
 // Hydra Audio — GPL-3.0
-// WebSocket message dispatch. All globals (store, server, *Manager …) are
-// declared in main.swift and are visible across the target.
+// WebSocket message dispatch. State (store, server, *Manager …) lives on the
+// DaemonContext this extension belongs to (see DaemonRuntime.swift).
 
 import Foundation
 import Network
 import HydraCore
 
+extension DaemonContext {
+
 /// Handles one inbound WebSocket message from `connection`.
-/// Called from main.swift's `onMessage` closure (hopped to the main actor).
-/// The daemon's control plane is main-actor-isolated: the globals it touches
-/// (store, server, *Manager) live in main.swift's main-actor top level, and the
-/// heavy lifting happens on each manager's own internal queue.
-@MainActor
+/// Called from DaemonContext's `onMessage` closure (hopped to the main actor).
+/// The control plane is main-actor-isolated: the state it touches (store,
+/// server, *Manager) lives on the context, and the heavy lifting happens on
+/// each manager's own internal queue.
 func handleWSMessage(_ message: WSMessage, from connection: NWConnection) {
     switch message {
     case .getStatus:
@@ -109,8 +110,8 @@ func handleWSMessage(_ message: WSMessage, from connection: NWConnection) {
                                  aes67TX: payload.aes67TX,
                                  stereo: payload.stereo) != nil {
             server.broadcast(.interfaces(InterfacesPayload(interfaces: interfaceStore.all())))
-            ndiManager.syncTx(interfaces: interfaceStore.all())
-            aes67TxManager.syncTx(interfaces: interfaceStore.all())
+            ndiManager.syncTx(bridges: bridgeManager.infos())
+            aes67TxManager.syncTx(bridges: bridgeManager.infos())
         }
     case .deleteInterface(let ref):
         if let removed = interfaceStore.delete(id: ref.id) {
@@ -128,8 +129,8 @@ func handleWSMessage(_ message: WSMessage, from connection: NWConnection) {
                 server.broadcast(.matrix(MatrixPayload(connections: store.allConnections())))
             }
             server.broadcast(.interfaces(InterfacesPayload(interfaces: interfaceStore.all())))
-            ndiManager.syncTx(interfaces: interfaceStore.all())
-            aes67TxManager.syncTx(interfaces: interfaceStore.all())
+            ndiManager.syncTx(bridges: bridgeManager.infos())
+            aes67TxManager.syncTx(bridges: bridgeManager.infos())
             recordingManager.interfacesChanged(interfaceStore.all())
             // Ghost-state purge: inserts/trim configured on the freed
             // slices die with the interface.
@@ -139,13 +140,23 @@ func handleWSMessage(_ message: WSMessage, from connection: NWConnection) {
     case .setInterfaceNDI(let payload):
         if interfaceStore.setNDI(id: payload.id, enabled: payload.enabled) {
             server.broadcast(.interfaces(InterfacesPayload(interfaces: interfaceStore.all())))
-            ndiManager.syncTx(interfaces: interfaceStore.all())
+            ndiManager.syncTx(bridges: bridgeManager.infos())
         }
     case .setInterfaceAES67(let payload):
         if interfaceStore.setAES67(id: payload.id, enabled: payload.enabled) {
             server.broadcast(.interfaces(InterfacesPayload(interfaces: interfaceStore.all())))
-            aes67TxManager.syncTx(interfaces: interfaceStore.all())
+            aes67TxManager.syncTx(bridges: bridgeManager.infos())
         }
+    case .getBridges:
+        server.send(.bridges(BridgesPayload(bridges: bridgeManager.infos())), to: connection)
+    case .setBridgeEnabled(let payload):
+        // Acquire/release the bridge's CoreAudio box; BridgeManager broadcasts the
+        // refreshed state via its onChange hook.
+        bridgeManager.setEnabled(id: payload.id, enabled: payload.enabled)
+    case .setBridgeRole(let payload):
+        bridgeManager.setRole(id: payload.id, role: payload.role)
+    case .setBridgeNetworkTX(let payload):
+        bridgeManager.setNetworkTX(id: payload.id, ndiTX: payload.ndiTX, aes67TX: payload.aes67TX)
     case .getNdi:
         server.send(.ndi(ndiManager.payload()), to: connection)
     case .getRecordings:
@@ -167,7 +178,9 @@ func handleWSMessage(_ message: WSMessage, from connection: NWConnection) {
         // onChange broadcasts the refreshed module state.
     case .status, .matrix, .levels, .labels, .scenes, .devices, .apps, .aes67,
          .vst, .strips, .events, .event, .config, .interfaces, .ndi, .recordings,
-         .modules:
+         .modules, .bridges:
         break // daemon → app only; ignore if echoed
     }
 }
+
+} // extension DaemonContext

@@ -36,12 +36,16 @@ import os
 final class PoolTxTap {
     let base: Int
     let channels: Int
+    /// nil → read the backplane output pool at `base` (legacy). Non-nil → read
+    /// the OUTPUT of that grid node (e.g. a bridge), resolved to a tap at rebuild.
+    let sourceNodeID: String?
     let ring: ChannelRing
     let staging: UnsafeMutablePointer<Float>
 
-    init(base: Int, channels: Int, rate: Double) {
+    init(base: Int, channels: Int, rate: Double, sourceNodeID: String? = nil) {
         self.base = base
         self.channels = channels
+        self.sourceNodeID = sourceNodeID
         ring = ChannelRing(channels: channels, producerRate: rate, consumerRate: rate)
         staging = .allocate(capacity: Hydra.maxIOFrames * channels)
         staging.initialize(repeating: 0, count: Hydra.maxIOFrames * channels)
@@ -68,6 +72,7 @@ final class MatrixStore {
     private let control = DispatchQueue(label: "hydra.matrix.control")
     private var matrix = PatchMatrix()
     private var deviceTaps: [EngineTap] = []
+    private var bridgeTaps: [EngineTap] = []   // Hydra Audio Bridges
     private var appTaps: [EngineTap] = []
     private var netTaps: [EngineTap] = []
     private var ndiTaps: [EngineTap] = []
@@ -77,9 +82,14 @@ final class MatrixStore {
     private var aesTxTaps: [PoolTxTap] = []       // AES67 transmitters
     private var chainTaps: [ChainTap] = []
     private var stripRoutes: [StripRoute] = []
+    /// Lazy bridge attach: fired (on the control queue) with the set of bridge
+    /// ids referenced by ≥1 connection, whenever it changes. BridgeManager opens
+    /// IOProcs/ASRC only for these, not for every enabled bridge.
+    var onBridgeUsage: ((Set<String>) -> Void)?
+    private var lastBridgeUsage: Set<String> = []
     /// Chains MUST come last: process() uses their buffer-index range to
     /// split mixing into pre-chain and post-chain passes.
-    private var taps: [EngineTap] { deviceTaps + appTaps + netTaps + ndiTaps + moduleTaps + chainTaps }
+    private var taps: [EngineTap] { deviceTaps + bridgeTaps + appTaps + netTaps + ndiTaps + moduleTaps + chainTaps }
     private var slotByID: [String: Int32] = [:]
     private var freeSlots: [Int32] = (0..<Int32(Hydra.maxConnections)).reversed()
     private var retained: [Snapshot] = []
@@ -91,6 +101,16 @@ final class MatrixStore {
     private let inputPeaks: UnsafeMutablePointer<Float>
     private let outputPeaks: UnsafeMutablePointer<Float>
     private let frameAbs: UnsafeMutablePointer<Float>
+    /// Per-source-node input peaks (written by RT thread). One flat buffer, packed
+    /// by rebuildLocked; `nodePeakLayout` maps each source node to its slice. This
+    /// lets a transmitter's pin light from the source's OWN audio, independent of
+    /// any patch. Fixed capacity, never freed/realloc'd, so a stale snapshot can
+    /// never write past it (writes are bounds-checked too).
+    private static let nodePeakCapacity = 2048
+    private let nodePeaks: UnsafeMutablePointer<Float>
+    /// nodeID → (offset, channels) into `nodePeaks`. Rebuilt on the control queue,
+    /// read by nodeChannelPeaks() under control.sync.
+    private var nodePeakLayout: [(nodeID: String, offset: Int, channels: Int)] = []
     /// Single-byte flag: control sets it, RT reads it.
     var channelMeteringEnabled = false
     /// Audio-thread-only: frames since the last per-channel metering pass, so we
@@ -123,17 +143,30 @@ final class MatrixStore {
         let taps: ContiguousArray<EngineTap>
         /// The chain taps (last entries of `taps`), rendered between passes.
         let chains: ContiguousArray<ChainTap>
-        /// Pool TX taps: post-mix copies of backplane-output slices (NDI TX).
+        /// Pool TX taps: post-mix copies of backplane-output slices (legacy).
         let poolTx: ContiguousArray<PoolTxTap>
+        /// Node-sourced TX: copy a grid node's OUTPUT staging (e.g. a bridge) to
+        /// the sender's ring. `source.outChannels == tap.channels`, same layout.
+        struct NodeTx { let tap: PoolTxTap; let source: EngineTap }
+        let nodeTx: ContiguousArray<NodeTx>
+        /// Where to write each tap's per-channel INPUT peak (offset into the
+        /// store's `nodePeaks` buffer + channel count). Aligned 1:1 with `taps`;
+        /// nil for taps that aren't metered as sources (e.g. chains). Lets a
+        /// transmitter pin light from the source's own audio, no patch needed.
+        struct InMeter { let offset: Int; let channels: Int }
+        let inMeters: ContiguousArray<InMeter?>
 
         init(connsPre: ContiguousArray<Conn>, conns: ContiguousArray<Conn>,
              taps: ContiguousArray<EngineTap>, chains: ContiguousArray<ChainTap>,
-             poolTx: ContiguousArray<PoolTxTap>) {
+             poolTx: ContiguousArray<PoolTxTap>, nodeTx: ContiguousArray<NodeTx>,
+             inMeters: ContiguousArray<InMeter?>) {
             self.connsPre = connsPre
             self.conns = conns
             self.taps = taps
             self.chains = chains
             self.poolTx = poolTx
+            self.nodeTx = nodeTx
+            self.inMeters = inMeters
         }
     }
 
@@ -144,6 +177,8 @@ final class MatrixStore {
         inputPeaks.initialize(repeating: 0, count: Hydra.backplaneChannels)
         outputPeaks = .allocate(capacity: Hydra.backplaneChannels)
         outputPeaks.initialize(repeating: 0, count: Hydra.backplaneChannels)
+        nodePeaks = .allocate(capacity: Self.nodePeakCapacity)
+        nodePeaks.initialize(repeating: 0, count: Self.nodePeakCapacity)
         frameAbs = .allocate(capacity: Hydra.backplaneChannels)
         frameAbs.initialize(repeating: 0, count: Hydra.backplaneChannels)
         lock = .allocate(capacity: 1)
@@ -160,6 +195,28 @@ final class MatrixStore {
     func setDeviceTaps(_ newTaps: [EngineTap]) {
         control.sync {
             deviceTaps = newTaps
+            rebuildLocked()
+        }
+    }
+
+    /// Publish the current patched-bridge set to `onBridgeUsage` (used once at
+    /// startup, after the hook is wired but the persisted matrix already loaded).
+    func publishBridgeUsage() {
+        control.sync {
+            var used = Set<String>()
+            for c in matrix.connections {
+                if let b = Hydra.bridgeID(fromNodeID: c.source.nodeID) { used.insert(b) }
+                if let b = Hydra.bridgeID(fromNodeID: c.destination.nodeID) { used.insert(b) }
+            }
+            lastBridgeUsage = used
+            onBridgeUsage?(used)
+        }
+    }
+
+    /// New bridge set (from BridgeManager). Triggers an atomic re-bind.
+    func setBridgeTaps(_ newTaps: [EngineTap]) {
+        control.sync {
+            bridgeTaps = newTaps
             rebuildLocked()
         }
     }
@@ -356,23 +413,22 @@ final class MatrixStore {
             }
         }
 
-        // Strip routing: source channel → (strip tap buffer, strip channel).
-        // Pre-legs (raw source → trim → strip input) are added once per strip
-        // channel; connections from those channels then read the strip output.
+        // Strip routing: source channel → (strip tap buffer, strip channel). We
+        // resolve the map first, but DON'T feed the strips yet — a strip's inserts
+        // must only process audio that is actually routed somewhere. The pre-legs
+        // (raw source → trim → strip input) are emitted below, gated on a strip
+        // being read by at least one connection.
         var stripBySource: [String: (buf: Int32, stripCh: Int32)] = [:]
-        var connsPre = ContiguousArray<Snapshot.Conn>()
         for route in stripRoutes {
             guard let chain = chainIndexByID[route.chainID],
                   let src = sourceMap[route.nodeID],
                   route.channelIndex < src.channels else { continue }
             stripBySource["\(route.nodeID):\(route.channelIndex)"] = (chain.buf, route.stripChannel)
-            connsPre.append(.init(srcBuf: src.buf, srcCh: Int32(route.channelIndex),
-                                  dstBuf: chain.buf, dstCh: route.stripChannel,
-                                  gain: route.trim, slot: -1)) // no meter on internal legs
         }
 
         var conns = ContiguousArray<Snapshot.Conn>()
         var reroutedCount = 0
+        var usedChainBufs = Set<Int32>()   // strips actually read by a connection
         conns.reserveCapacity(matrix.connections.count)
         for c in matrix.connections {
             guard let src = sourceMap[c.source.nodeID],
@@ -384,6 +440,7 @@ final class MatrixStore {
             if let strip = stripBySource["\(c.source.nodeID):\(c.source.channelIndex)"] {
                 // Read the strip's processed output instead of the raw source.
                 reroutedCount += 1
+                usedChainBufs.insert(strip.buf)
                 conns.append(.init(srcBuf: strip.buf, srcCh: strip.stripCh,
                                    dstBuf: dst.buf, dstCh: Int32(c.destination.channelIndex),
                                    gain: c.gain, slot: slot))
@@ -393,13 +450,82 @@ final class MatrixStore {
                                    gain: c.gain, slot: slot))
             }
         }
-        if !stripRoutes.isEmpty {
-            log("Matrix rebuilt: \(conns.count) conns (\(reroutedCount) through strips), \(connsPre.count) strip legs, \(stripRoutes.count) routes")
+
+        // Pre-legs: feed raw source → trim → strip input, but ONLY for strips a
+        // connection reads from. An unconnected strip therefore gets a cleared
+        // (silent) input each block (step 4 zeroes every tap's input), so its
+        // inserts process silence — no audio reaches the plugin, and its editor
+        // shows no signal, until the source is actually patched somewhere.
+        var connsPre = ContiguousArray<Snapshot.Conn>()
+        for route in stripRoutes {
+            guard let chain = chainIndexByID[route.chainID],
+                  usedChainBufs.contains(chain.buf),
+                  let src = sourceMap[route.nodeID],
+                  route.channelIndex < src.channels else { continue }
+            connsPre.append(.init(srcBuf: src.buf, srcCh: Int32(route.channelIndex),
+                                  dstBuf: chain.buf, dstCh: route.stripChannel,
+                                  gain: route.trim, slot: -1)) // no meter on internal legs
         }
+
+        // Only render strips that are in use — an unconnected strip does zero
+        // plugin work (and its analyzer stays quiet).
+        let activeChains = chainTaps.filter {
+            chainIndexByID[$0.info.id].map { usedChainBufs.contains($0.buf) } ?? false
+        }
+        if !stripRoutes.isEmpty {
+            log("Matrix rebuilt: \(conns.count) conns (\(reroutedCount) through strips), \(connsPre.count) strip legs, \(activeChains.count)/\(chainTaps.count) strips active, \(stripRoutes.count) routes")
+        }
+        // Lazy bridge attach: which bridges are actually patched? Notify on change
+        // so BridgeManager only opens IOProcs (ASRC) for those.
+        var usedBridges = Set<String>()
+        for c in matrix.connections {
+            if let b = Hydra.bridgeID(fromNodeID: c.source.nodeID) { usedBridges.insert(b) }
+            if let b = Hydra.bridgeID(fromNodeID: c.destination.nodeID) { usedBridges.insert(b) }
+        }
+        if usedBridges != lastBridgeUsage {
+            lastBridgeUsage = usedBridges
+            onBridgeUsage?(usedBridges)
+        }
+
+        // Split TX taps: node-sourced ones (bridge NDI/AES) read a tap's output;
+        // legacy ones read the backplane pool. Resolve the source tap by nodeID.
+        var backplaneTx = ContiguousArray<PoolTxTap>()
+        var nodeTx = ContiguousArray<Snapshot.NodeTx>()
+        for tx in (poolTxTaps + recordTaps + aesTxTaps) {
+            if let nodeID = tx.sourceNodeID,
+               let src = allTaps.first(where: { $0.nodeID == nodeID && tx.base + tx.channels <= $0.outChannels }) {
+                nodeTx.append(.init(tap: tx, source: src))
+            } else if tx.sourceNodeID == nil {
+                backplaneTx.append(tx)
+            }
+            // else: node-sourced but its tap isn't attached yet → skip this rebuild.
+        }
+
+        // Per-source input metering layout: pack each source tap's channels into
+        // the fixed `nodePeaks` buffer, aligned 1:1 with `allTaps`. Chains and
+        // sink-only taps (no input) are skipped. The pin then lights from the
+        // source's own level, regardless of whether it's patched.
+        var inMeters = ContiguousArray<Snapshot.InMeter?>()
+        inMeters.reserveCapacity(allTaps.count)
+        var layout: [(nodeID: String, offset: Int, channels: Int)] = []
+        var nextOffset = 0
+        for tap in allTaps {
+            if !(tap is ChainTap), tap.inChannels > 0, tap.inStaging != nil,
+               nextOffset + tap.inChannels <= Self.nodePeakCapacity {
+                inMeters.append(.init(offset: nextOffset, channels: tap.inChannels))
+                layout.append((tap.nodeID, nextOffset, tap.inChannels))
+                nextOffset += tap.inChannels
+            } else {
+                inMeters.append(nil)
+            }
+        }
+        nodePeakLayout = layout
+
         let snapshot = Snapshot(connsPre: connsPre, conns: conns,
                                 taps: ContiguousArray(allTaps),
-                                chains: ContiguousArray(chainTaps),
-                                poolTx: ContiguousArray(poolTxTaps + recordTaps + aesTxTaps))
+                                chains: ContiguousArray(activeChains),
+                                poolTx: backplaneTx, nodeTx: nodeTx,
+                                inMeters: inMeters)
         retained.append(snapshot)
         if retained.count > 8 { retained.removeFirst(retained.count - 8) }
 
@@ -529,8 +655,22 @@ final class MatrixStore {
             tx.ring.write(from: tx.staging, frames: frames)
         }
 
-        // 7. Per-channel backplane peaks for signal LEDs.
-        runChannelMetering(inData: inData, outData: outData,
+        // 6.6. Node-sourced TX (bridge NDI/AES): copy a slice of the source node's
+        //      OUTPUT staging — `base` is the channel offset within the source (0
+        //      for NDI's full width; flow*8 for AES67's 8-ch flows). Strided copy,
+        //      same shape as the backplane pool TX above.
+        for n in snapshot.nodeTx {
+            guard let src = n.source.outStaging else { continue }
+            let srcChans = n.source.outChannels
+            for ch in 0..<n.tap.channels where n.tap.base + ch < srcChans {
+                vDSP_vsadd(src + n.tap.base + ch, vDSP_Stride(srcChans), &zero,
+                           n.tap.staging + ch, vDSP_Stride(n.tap.channels), vDSP_Length(frames))
+            }
+            n.tap.ring.write(from: n.tap.staging, frames: frames)
+        }
+
+        // 7. Per-channel backplane peaks + per-source-node input peaks for LEDs.
+        runChannelMetering(snapshot: snapshot, inData: inData, outData: outData,
                            inChans: inChans, outChans: outChans, frames: frames)
     }
 
@@ -578,9 +718,10 @@ final class MatrixStore {
         }
     }
 
-    /// AUDIO THREAD: per-channel backplane peaks for signal LEDs.
+    /// AUDIO THREAD: per-channel backplane peaks + per-source-node input peaks.
     @inline(__always)
-    private func runChannelMetering(inData: UnsafeMutablePointer<Float>,
+    private func runChannelMetering(snapshot: Snapshot,
+                                    inData: UnsafeMutablePointer<Float>,
                                     outData: UnsafeMutablePointer<Float>,
                                     inChans: Int, outChans: Int, frames: Int) {
         guard channelMeteringEnabled else { return }
@@ -604,6 +745,33 @@ final class MatrixStore {
         for ch in 0..<nOut {
             vDSP_maxmgv(outData + ch, vDSP_Stride(outChans), &peak, vDSP_Length(frames))
             outputPeaks[ch] = peak
+        }
+
+        // Per-source-node input peaks (same throttle): each source tap's staged
+        // input, metered per channel into its `nodePeaks` slice. This is what
+        // lights a transmitter's pin from its OWN audio, with no patch required.
+        for i in snapshot.taps.indices {
+            guard let m = snapshot.inMeters[i],
+                  let staging = snapshot.taps[i].inStaging else { continue }
+            let chans = m.channels
+            for ch in 0..<chans where m.offset + ch < Self.nodePeakCapacity {
+                vDSP_maxmgv(staging + ch, vDSP_Stride(chans), &peak, vDSP_Length(frames))
+                nodePeaks[m.offset + ch] = peak
+            }
+        }
+    }
+
+    /// Per-source-node input peaks (for transmitter pins). Keyed "nodeID:channel".
+    /// Read under control.sync, like levels()/channelPeaks().
+    func nodeChannelPeaks() -> [String: Float] {
+        control.sync {
+            var out: [String: Float] = [:]
+            for (nodeID, offset, channels) in nodePeakLayout {
+                for ch in 0..<channels where offset + ch < Self.nodePeakCapacity {
+                    out["\(nodeID):\(ch)"] = nodePeaks[offset + ch]
+                }
+            }
+            return out
         }
     }
 }

@@ -18,6 +18,9 @@ struct ContentView: View {
     @StateObject private var installer = InstallManager()
     @State private var selection: GridSelection?
     @State private var channelFocus: ChannelFocus?
+    /// Bridge selected in the sidebar → its config shows in the inspector
+    /// (mutually exclusive with a cell/channel selection).
+    @State private var selectedBridge: String?
     @State private var sidebarTab: SidebarTab = .devices
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showInspector = true
@@ -28,7 +31,7 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView(tab: $sidebarTab)
+            SidebarView(tab: $sidebarTab, selectedBridge: $selectedBridge)
         } detail: {
             GridView(selection: $selection, channelFocus: $channelFocus)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -36,16 +39,20 @@ struct ContentView: View {
         // Native macOS inspector panel — system handles resize, collapse chrome,
         // and the keyboard shortcut. Width matches the previous 264-pt strip.
         .inspector(isPresented: $showInspector) {
-            InspectorView(selection: $selection, channelFocus: $channelFocus)
+            InspectorView(selection: $selection, channelFocus: $channelFocus,
+                          selectedBridge: $selectedBridge)
                 .inspectorColumnWidth(min: 240, ideal: 264, max: 340)
         }
-        // Auto-reveal the inspector when a cell is selected; a cell and a single
-        // channel are mutually exclusive selections.
+        // Cell, channel and bridge selections are mutually exclusive; selecting
+        // any of them reveals the inspector and clears the others.
         .onChange(of: selection) { _, newValue in
-            if newValue != nil { showInspector = true; channelFocus = nil }
+            if newValue != nil { showInspector = true; channelFocus = nil; selectedBridge = nil }
         }
         .onChange(of: channelFocus) { _, newValue in
-            if newValue != nil { showInspector = true; selection = nil }
+            if newValue != nil { showInspector = true; selection = nil; selectedBridge = nil }
+        }
+        .onChange(of: selectedBridge) { _, newValue in
+            if newValue != nil { showInspector = true; selection = nil; channelFocus = nil }
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -178,7 +185,7 @@ struct ContentView: View {
             statusDot(
                 ok: client.status?.backplaneInstalled == true,
                 label: "Backplane",
-                help: "Hydra Virtual Soundcard · \(client.status?.inputChannels ?? 0)×\(client.status?.outputChannels ?? 0)"
+                help: "Hydra Engine · \(client.status?.inputChannels ?? 0)×\(client.status?.outputChannels ?? 0)"
             )
             statusDot(
                 ok: client.status?.engineRunning == true,

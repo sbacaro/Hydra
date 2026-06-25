@@ -24,9 +24,9 @@ swift test                     # HydraCore + HydraRT (incl. the ring/resampler t
 | HydraCore | framework | Constants, models, WS protocol, pure DSP math (resampler, servo) |
 | HydraRT | framework | Real-time SPSC ring + polyphase resampler (split out so it's testable) |
 | HydraVST / HydraNDIShim / HydraModuleABI / HydraPluginHostABI | frameworks (C/C++) | ABIs + VST3 shim |
-| hydrad | app | Background audio daemon |
+| HydraDaemon | framework | Audio engine — runs in-process inside the app (formerly the `hydrad` daemon) |
 | hydra-plugin-host | app | Out-of-process VST host (crash isolation) |
-| HydraApp | app | SwiftUI UI; embeds the driver, daemon, plugin host + LaunchAgent |
+| HydraApp | app | SwiftUI UI + the in-process engine; embeds the driver, HydraDaemon, frameworks, and the plugin host |
 | HydraVirtualSoundcard | .driver | AudioServerPlugIn backplane (macOS 11 target) |
 | HydraCoreTests / HydraRTTests | unit tests | Logic + real-time ring/resampler (run under ASan/TSan in CI) |
 
@@ -43,13 +43,13 @@ xcodebuild test  -scheme HydraRTTests -destination 'platform=macOS'
 
 Known things to check/adjust after migration:
 
-- **Code signing:** `project.yml` uses ad-hoc (`-`). For a stable SMAppService
-  signature (the daemon's LaunchAgent LWCR), set `CODE_SIGN_IDENTITY` to your
-  self-signed `Hydra Dev` cert (Keychain Access → Certificate Assistant) — e.g.
-  via a local `.xcconfig` or by editing `project.yml`.
-- **LaunchAgent / helpers:** the app embeds `hydrad` + `hydra-plugin-host` into
-  `Contents/Library/Helpers` and the LaunchAgent plist into
-  `Contents/Library/LaunchAgents` (a post-build script). Confirm they land there.
+- **Code signing:** `project.yml` uses ad-hoc (`-`). For stable macOS privacy
+  permissions (TCC, e.g. audio capture) across rebuilds, set `CODE_SIGN_IDENTITY`
+  to your self-signed `Hydra Dev` cert (Keychain Access → Certificate Assistant)
+  — e.g. via a local `.xcconfig` or by editing `project.yml`.
+- **Helpers:** the app embeds `hydra-plugin-host` into `Contents/Library/Helpers`
+  (spawned on demand for VST crash isolation). The audio engine is the embedded
+  `HydraDaemon.framework` — there is no separate daemon process or LaunchAgent.
 - **VST3 SDK:** fetched by a pre-build script on HydraVST (`Scripts/fetch_vst3sdk.sh`).
 
 ## Fallback generator

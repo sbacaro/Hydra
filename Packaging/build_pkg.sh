@@ -6,8 +6,8 @@
 #   • Hydra.app                        → /Applications
 #   • HydraVirtualSoundcard.driver     → /Library/Audio/Plug-Ins/HAL
 # and a postinstall script fixes ownership and restarts coreaudiod so the
-# virtual soundcard appears immediately. hydrad is embedded inside Hydra.app and
-# registers itself as a LaunchAgent on first launch — the pkg doesn't touch it.
+# virtual soundcard appears immediately. The audio engine runs in-process inside
+# Hydra.app (no separate daemon / LaunchAgent), so the pkg only ships the app + driver.
 #
 # Usage:
 #   bash Packaging/build_pkg.sh
@@ -40,7 +40,8 @@ fail() { printf '\033[1;31m[pkg] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 command -v xcodebuild >/dev/null || fail "xcodebuild not found — install Xcode"
 [ -d "$PROJ" ] || fail "Hydra.xcodeproj not found — run: ruby Scripts/generate_xcodeproj.rb"
 
-# 1. Build the app (also builds + embeds the driver and hydrad).
+# 1. Build the app (also builds + embeds the driver, the HydraDaemon engine
+#    framework and the hydra-plugin-host helper).
 log "Building $APP_NAME (Release, universal) — this takes a minute ..."
 xcodebuild build \
   -project "$PROJ" -scheme "HydraApp" -configuration Release \

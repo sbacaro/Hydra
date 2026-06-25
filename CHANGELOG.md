@@ -2,6 +2,70 @@
 
 All notable changes to Hydra are documented here.
 
+## [1.0.0] — 2026-06-25
+
+First stable release. Hydra is now a single app process, ships eight selectable
+audio devices instead of one, and is fully localized in five languages.
+
+### One process
+- **The audio engine runs in-process.** The former standalone `hydrad` daemon +
+  LaunchAgent is gone; the engine is a framework (`HydraDaemon`) started inside
+  the app, talking to the UI over a local WebSocket. The Dock and Activity
+  Monitor now show **one** Hydra process, not two.
+
+### Eight Hydra Audio Bridges (replaces the single virtual soundcard)
+- The single 256-channel "Hydra Virtual Soundcard" is replaced by **eight fixed,
+  independently selectable loopback devices** — Hydra Audio Bridge 2-A, 2-B, 4,
+  8, 16, 32, 64 and 128 (N in / N out each). Any app can pick a bridge as its
+  input or output, Loopback-style; toggle each on/off in the sidebar.
+- A hidden **"Hydra Engine"** hub drives the routing matrix; the engine attaches
+  a bridge's audio path **lazily** (only when it's actually patched), and a
+  debounce coalesces device-toggle storms so coreaudiod stays stable.
+- Per-bridge **NDI / AES67 transmit** can be enabled independently.
+- Bridges, physical interfaces, captured apps and network sources all patch in
+  one unified matrix.
+
+### Performance
+- **Unity fast-path in the ASRC.** When producer and consumer share the sample
+  rate (all bridges + hub at 48 kHz), the ring uses linear interpolation instead
+  of the polyphase sinc — ~10× less CPU per channel, transparent at unity.
+- Unconnected channel strips do **zero** plugin work, and unpatched bridges open
+  no IO proc — engine load scales with what's actually routed.
+
+### Plugins (VST3)
+- An insert now processes audio **only when its source is patched** somewhere —
+  no more a plugin "hearing" an unrouted source.
+- Adding an insert **opens its editor automatically**, and the out-of-process
+  plugin host no longer shows a **Dock icon** (stays an accessory app; App Nap is
+  held off so editors stay live).
+- Plug-in search is **fuzzy and order-independent** ("proq fab" finds
+  "FabFilter Pro-Q").
+
+### UI — Apple HIG
+- **Patch grid:** a single click toggles a connection (⌘-click selects for gain
+  editing); Numbers-style zebra rows, accent crosshair and circular connection
+  dots.
+- **Device View** (mass patch): channel rows drop the redundant device name,
+  aligned columns, calm empty states.
+- **Network tab** rebuilt — PTP "no grandmaster" is a quiet status footer, not a
+  warning; empty AES67/NDI states are calm centered placeholders.
+- Sidebar master/detail with a per-bridge inspector; minimalist menu bar; the
+  main window reopens on relaunch and on Dock click.
+- **Source signal pins** now light from the source's own audio, even with no
+  patch made.
+
+### Localization — five languages
+- Complete **Brazilian Portuguese**, plus brand-new **Spanish, French, German and
+  Italian** — the full UI (Settings, About, sidebar, grid, onboarding) across all
+  368 strings. Fixed several strings that bypassed localization (String-typed
+  helpers) and refreshed copy that still referenced the old single soundcard.
+
+### Build
+- Run Script sandboxing enabled (Xcode's recommended setting); the VST3-SDK fetch
+  is isolated to a `FetchVST3SDK` aggregate target so the "Copy Headers delayed"
+  warning is gone. Project baseline bumped (no more "update to recommended
+  settings" nag).
+
 ## [0.21.0 beta] — 2026-06-21
 
 ### Auto-update — self-contained, no third-party framework

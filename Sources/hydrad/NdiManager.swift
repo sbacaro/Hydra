@@ -112,7 +112,7 @@ final class NdiRx: EngineTap, @unchecked Sendable {
 // MARK: - NdiTx: one broadcasting virtual interface
 
 final class NdiTx: @unchecked Sendable {
-    let interfaceID: UUID
+    let bridgeID: String
     let tap: PoolTxTap
 
     private var send: UnsafeMutableRawPointer?
@@ -123,26 +123,28 @@ final class NdiTx: @unchecked Sendable {
     private let sampleRate: Double
     private let buffer: UnsafeMutablePointer<Float>
 
-    init?(interface info: VirtualInterfaceInfo, rate: Double) {
-        guard info.outChannels > 0,
-              let send = hndi_send_create(info.name, Int32(info.outChannels), Int32(rate)) else {
-            log("NDI TX \"\(info.name)\": sender creation failed (needs ≥1 out channel)")
+    init?(bridge: BridgeInfo, rate: Double) {
+        guard bridge.channels > 0,
+              let send = hndi_send_create(bridge.name, Int32(bridge.channels), Int32(rate)) else {
+            log("NDI TX \"\(bridge.name)\": sender creation failed (needs ≥1 out channel)")
             return nil
         }
         self.send = send
-        self.interfaceID = info.id
-        self.tap = PoolTxTap(base: info.outBase, channels: info.outChannels, rate: rate)
+        self.bridgeID = bridge.id
+        // Node-sourced: transmit this bridge's OUTPUT staging (base unused).
+        self.tap = PoolTxTap(base: 0, channels: bridge.channels, rate: rate,
+                             sourceNodeID: bridge.nodeID)
         self.chunk = Int(rate / 100) // ~10 ms
         self.sampleRate = rate
-        buffer = .allocate(capacity: chunk * info.outChannels)
-        buffer.initialize(repeating: 0, count: chunk * info.outChannels)
+        buffer = .allocate(capacity: chunk * bridge.channels)
+        buffer.initialize(repeating: 0, count: chunk * bridge.channels)
 
-        let thread = Thread { [weak self] in self?.sendLoop(name: info.name) }
+        let thread = Thread { [weak self] in self?.sendLoop(name: bridge.name) }
         thread.name = "hydra.ndi.tx"
         thread.qualityOfService = .userInteractive
         self.thread = thread
         thread.start()
-        log("NDI TX started: \"\(info.name)\" (\(info.outChannels)ch, pool \(info.outBase + 1)–\(info.outBase + info.outChannels))")
+        log("NDI TX started: \"\(bridge.name)\" (\(bridge.channels)ch, node \(bridge.nodeID))")
     }
 
     deinit {
@@ -200,7 +202,7 @@ final class NdiManager: @unchecked Sendable {
     private var subscribedIDs: Set<String>
     /// All live receivers (registered with the engine only once ready).
     private var receivers: [String: NdiRx] = [:]
-    private var senders: [UUID: NdiTx] = [:]
+    private var senders: [String: NdiTx] = [:]
     var onChange: ((NdiPayload) -> Void)?
 
     private static let persistURL = hydraSupportURL("ndi.json")
@@ -247,24 +249,24 @@ final class NdiManager: @unchecked Sendable {
         }
     }
 
-    /// Rebinds TX senders to the current interface list (create/delete/toggle).
-    func syncTx(interfaces: [VirtualInterfaceInfo]) {
+    /// Rebinds TX senders to the bridges with NDI TX enabled (toggle/channel change).
+    func syncTx(bridges: [BridgeInfo]) {
         queue.sync {
             guard runtimeAvailable else { return }
             let rate = BackplaneProbe.backplaneDeviceID()
                 .map(BackplaneProbe.nominalSampleRate) ?? Hydra.defaultSampleRate
             let wanted = Dictionary(uniqueKeysWithValues:
-                interfaces.filter(\.ndiTX).map { ($0.id, $0) })
+                bridges.filter(\.ndiTX).map { ($0.id, $0) })
 
             for (id, tx) in senders {
                 let current = wanted[id]
-                if current == nil || current!.outBase != tx.tap.base || current!.outChannels != tx.tap.channels {
+                if current == nil || current!.channels != tx.tap.channels {
                     tx.stop()
                     senders.removeValue(forKey: id)
                 }
             }
             for (id, info) in wanted where senders[id] == nil {
-                if let tx = NdiTx(interface: info, rate: rate) {
+                if let tx = NdiTx(bridge: info, rate: rate) {
                     senders[id] = tx
                 }
             }

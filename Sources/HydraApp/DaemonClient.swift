@@ -28,10 +28,15 @@ final class ConnMeters {
 final class SignalFlags {
     private(set) var inputs: [Bool] = []
     private(set) var outputs: [Bool] = []
+    /// Source-node channels with signal, as "nodeID:channel" keys. Lets a
+    /// transmitter's pin light from the source's own audio, with no patch.
+    private(set) var sources: Set<String> = []
 
-    func update(inputs newInputs: [Bool], outputs newOutputs: [Bool]) {
+    func update(inputs newInputs: [Bool], outputs newOutputs: [Bool],
+                sources newSources: Set<String>) {
         if newInputs != inputs { inputs = newInputs }
         if newOutputs != outputs { outputs = newOutputs }
+        if newSources != sources { sources = newSources }
     }
 }
 
@@ -65,7 +70,14 @@ final class DaemonClient {
     private(set) var toasts: [HydraEvent] = []
     private(set) var config = ConfigPayload()
     /// User-created virtual interfaces (named slices of the soundcard pool).
+    /// LEGACY — being replaced by `bridges` (fixed multi-device set).
     private(set) var interfaces: [VirtualInterfaceInfo] = []
+    /// Fixed Hydra Audio Bridges (the new multi-device set). Seeded from the
+    /// catalog so the UI has rows before the daemon's first `.bridges` push.
+    private(set) var bridges: [BridgeInfo] = Hydra.bridgeCatalog.map {
+        BridgeInfo(id: $0.id, name: $0.name, channels: $0.channels,
+                   enabled: false, present: false)
+    }
     /// NDI runtime state + discovered network sources.
     private(set) var ndi = NdiPayload()
     private(set) var modules = ModulesPayload()
@@ -295,6 +307,32 @@ final class DaemonClient {
                                                      ndiTX: ndiTX, aes67TX: aes67TX, stereo: stereo)))
     }
 
+    /// Turn a fixed bridge on/off (acquires/releases its CoreAudio device box).
+    func setBridgeEnabled(_ id: String, enabled: Bool) {
+        // Optimistic local update; the daemon's .bridges broadcast is the truth.
+        if let i = bridges.firstIndex(where: { $0.id == id }) {
+            bridges[i].enabled = enabled
+        }
+        send(.setBridgeEnabled(SetBridgeEnabledPayload(id: id, enabled: enabled)))
+    }
+
+    /// Set which direction(s) of a bridge show in the grid (in/out/both).
+    func setBridgeRole(_ id: String, role: BridgeRole) {
+        if let i = bridges.firstIndex(where: { $0.id == id }) {
+            bridges[i].role = role
+        }
+        send(.setBridgeRole(SetBridgeRolePayload(id: id, role: role)))
+    }
+
+    /// Enable/disable NDI or AES67 transmit of a bridge's output.
+    func setBridgeNetworkTX(_ id: String, ndiTX: Bool, aes67TX: Bool) {
+        if let i = bridges.firstIndex(where: { $0.id == id }) {
+            bridges[i].ndiTX = ndiTX
+            bridges[i].aes67TX = aes67TX
+        }
+        send(.setBridgeNetworkTX(SetBridgeNetworkTXPayload(id: id, ndiTX: ndiTX, aes67TX: aes67TX)))
+    }
+
     func setInterfaceNDI(_ id: UUID, enabled: Bool) {
         send(.setInterfaceNDI(InterfaceNDIPayload(id: id, enabled: enabled)))
     }
@@ -357,6 +395,7 @@ final class DaemonClient {
         task.resume()
         receiveLoop(task)
         send(.getStatus)
+        send(.getBridges)
     }
 
     private func receiveLoop(_ task: URLSessionWebSocketTask) {
@@ -394,7 +433,8 @@ final class DaemonClient {
             meters.peaks = payload.peaks
             signals.update(
                 inputs: (payload.sourcePeaks ?? []).map { $0 > Self.signalThreshold },
-                outputs: (payload.destinationPeaks ?? []).map { $0 > Self.signalThreshold })
+                outputs: (payload.destinationPeaks ?? []).map { $0 > Self.signalThreshold },
+                sources: Set(payload.activeSources ?? []))
         case .labels(let payload):
             labels = payload
         case .scenes(let payload):
@@ -413,6 +453,8 @@ final class DaemonClient {
             config = payload
         case .interfaces(let payload):
             interfaces = payload.interfaces
+        case .bridges(let payload):
+            bridges = payload.bridges
         case .ndi(let payload):
             ndi = payload
         case .modules(let payload):
@@ -432,6 +474,7 @@ final class DaemonClient {
              .getVST, .getStrips, .setStrip, .openPluginEditor,
              .setPluginAvailable, .setPluginFavorite, .setConfig,
              .getInterfaces, .createInterface, .deleteInterface, .setInterfaceNDI, .setInterfaceAES67,
+             .getBridges, .setBridgeEnabled, .setBridgeRole, .setBridgeNetworkTX,
              .getNdi, .subscribeNdi,
              .getModules, .subscribeModuleSource,
              .getRecordings, .startRecording, .stopRecording:
@@ -459,7 +502,7 @@ final class DaemonClient {
         connectionState = .disconnected
         status = nil
         meters.peaks = [:]
-        signals.update(inputs: [], outputs: [])
+        signals.update(inputs: [], outputs: [], sources: [])
         scheduleReconnect()
     }
 

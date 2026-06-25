@@ -6,13 +6,24 @@ import Foundation
 
 public enum Hydra {
     // MARK: Version
-    public static let version = "0.21.0"
-    public static let stage = "beta"
-    public static var versionString: String { "\(version) \(stage)" }
+    public static let version = "1.0.0"
+    /// Pre-release qualifier (e.g. "beta"). Empty for a stable release.
+    public static let stage = ""
+    public static var versionString: String {
+        stage.isEmpty ? version : "\(version) \(stage)"
+    }
 
-    // MARK: Backplane (virtual soundcard)
-    /// Device name as it appears in Audio MIDI Setup.
-    public static let backplaneDeviceName = "Hydra Virtual Soundcard"
+    // MARK: Engine hub (internal, hidden)
+    /// The engine's internal clock+mixing device. HIDDEN from users — it only
+    /// exists so the IOProc can drive the matrix that routes the bridges. Users
+    /// see only the Hydra Audio Bridges. (Formerly the user-facing 256-ch
+    /// "Hydra Virtual Soundcard"; now renamed + hidden, same UID/bundle.)
+    public static let backplaneDeviceName = "Hydra Engine"
+    /// CoreAudio UID of the hub (kDriver_Name + "_UID"). The engine resolves the
+    /// hub by UID (TranslateUIDToDevice), which works even though it's hidden —
+    /// a hidden device is excluded from the enumerated device list but can still
+    /// be translated from its UID.
+    public static let backplaneDeviceUID = "HydraVirtualSoundcard_UID"
     /// Bundle ID of the HAL plugin (customized BlackHole).
     public static let backplaneBundleID = "audio.hydra.virtualsoundcard"
     /// Loopback wires of the backplane device (output N → input N): 256 in / 256
@@ -25,6 +36,57 @@ public enum Hydra {
     public static let poolChannels = 256
     /// Initial target sample rate.
     public static let defaultSampleRate: Double = 48_000
+
+    // MARK: Bridges (fixed multi-device set)
+    /// A fixed "Hydra Audio Bridge": an independent loopback CoreAudio device with
+    /// `channels` inputs and `channels` outputs. Replaces the old single 256-wire
+    /// backplane + user-created virtual interfaces. The driver exposes one device
+    /// (and one box, for the on/off toggle) per spec; the engine attaches the
+    /// enabled ones and the grid shows each as its own node (`bridge:<id>`).
+    public struct BridgeSpec: Sendable, Equatable, Identifiable {
+        /// Stable short key (also the grid node suffix and persistence key).
+        public let id: String
+        /// Name shown in macOS (Audio MIDI Setup) and in the app.
+        public let name: String
+        /// CoreAudio device UID (must match what the driver publishes).
+        public let uid: String
+        /// Channel count, identical for input and output.
+        public let channels: Int
+        public init(id: String, name: String, uid: String, channels: Int) {
+            self.id = id; self.name = name; self.uid = uid; self.channels = channels
+        }
+    }
+
+    /// The fixed catalog of bridges, in display order. The driver, engine and UI
+    /// all derive from this single list.
+    /// UIDs MUST match what the driver publishes: kDevice_UID = kDriver_Name +
+    /// "_UID" (the driver builds with kHas_Driver_Name_Format=false). See the
+    /// per-bridge wrappers in Backplane/Driver/bridges/.
+    public static let bridgeCatalog: [BridgeSpec] = [
+        BridgeSpec(id: "2a",  name: "Hydra Audio Bridge 2-A", uid: "HydraAudioBridge2A_UID",  channels: 2),
+        BridgeSpec(id: "2b",  name: "Hydra Audio Bridge 2-B", uid: "HydraAudioBridge2B_UID",  channels: 2),
+        BridgeSpec(id: "4",   name: "Hydra Audio Bridge 4",   uid: "HydraAudioBridge4_UID",   channels: 4),
+        BridgeSpec(id: "8",   name: "Hydra Audio Bridge 8",   uid: "HydraAudioBridge8_UID",   channels: 8),
+        BridgeSpec(id: "16",  name: "Hydra Audio Bridge 16",  uid: "HydraAudioBridge16_UID",  channels: 16),
+        BridgeSpec(id: "32",  name: "Hydra Audio Bridge 32",  uid: "HydraAudioBridge32_UID",  channels: 32),
+        BridgeSpec(id: "64",  name: "Hydra Audio Bridge 64",  uid: "HydraAudioBridge64_UID",  channels: 64),
+        BridgeSpec(id: "128", name: "Hydra Audio Bridge 128", uid: "HydraAudioBridge128_UID", channels: 128),
+    ]
+
+    public static func bridgeSpec(id: String) -> BridgeSpec? {
+        bridgeCatalog.first { $0.id == id }
+    }
+    public static func bridgeSpec(uid: String) -> BridgeSpec? {
+        bridgeCatalog.first { $0.uid == uid }
+    }
+    /// Grid node id for a bridge (stable across reconnects).
+    public static func bridgeNodeID(id: String) -> String { "bridge:\(id)" }
+    public static func bridgeID(fromNodeID nodeID: String) -> String? {
+        nodeID.hasPrefix("bridge:") ? String(nodeID.dropFirst(7)) : nil
+    }
+    /// True when a CoreAudio device UID belongs to one of our bridges (so the
+    /// engine can present it as a `bridge:` node instead of a generic `dev:` one).
+    public static func isBridgeUID(_ uid: String) -> Bool { bridgeSpec(uid: uid) != nil }
 
     // MARK: Daemon ↔ App transport
     /// Local-only WebSocket. The daemon is the source of truth for audio state.

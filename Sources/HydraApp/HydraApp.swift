@@ -1,5 +1,7 @@
 // Hydra Audio — GPL-3.0
-// App entry point. UI only — all audio work lives in hydrad.
+// The SwiftUI app. The audio engine (HydraDaemon) runs in-process — see
+// DaemonService / DaemonRuntime. The process entry point is main.swift, which
+// calls HydraApp.main() after handling the VST scan-worker invocation.
 //
 // Hydra is a *menu-bar-first* app: at launch (e.g. when started at login) it runs
 // as an accessory with NO Dock icon and NO window — just the menu bar extra. A Dock
@@ -10,7 +12,7 @@ import SwiftUI
 import AppKit
 import HydraCore
 
-@main
+// NOTE: no `@main` — see main.swift for the process entry point.
 struct HydraApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
@@ -91,13 +93,24 @@ struct UpdateCommands: Commands {
     }
 }
 
+/// Posted by the AppDelegate when the user reopens Hydra (Dock/Applications) and
+/// no main window exists yet. The always-alive menu-bar label opens one.
+extension Notification.Name {
+    static let hydraOpenMainWindow = Notification.Name("hydraOpenMainWindow")
+}
+
 /// The menu bar glyph. Observes the client so the symbol reflects state live:
 /// offline → slashed, problem (no backplane) → warning, otherwise running waveform.
+/// Also the always-present scene view that fulfils "reopen → open main window".
 private struct MenuBarStatusLabel: View {
     @Environment(DaemonClient.self) private var client
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Image(systemName: symbol)
+            .onReceive(NotificationCenter.default.publisher(for: .hydraOpenMainWindow)) { _ in
+                openWindow(id: "main")
+            }
     }
 
     private var symbol: String {
@@ -148,6 +161,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // It's a menu bar app: closing the last window must not quit it.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Clicking Hydra in Finder/Applications/Dock while it's already running as a
+    /// menu-bar accessory must OPEN the main window (not just no-op). First launch
+    /// already shows the window via the App's `.defaultLaunchBehavior`.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = NSApp.windows.first(where: { isOrdinaryWindow($0) && $0.title == "Hydra Soundcard" }) {
+            window.makeKeyAndOrderFront(nil)
+        } else {
+            // No main window exists yet (suppressed launch / was closed) — ask the
+            // always-alive menu-bar scene to create it via SwiftUI's openWindow.
+            NotificationCenter.default.post(name: .hydraOpenMainWindow, object: nil)
+        }
+        return true
+    }
 
     /// A real app window (main / Settings / About) — not the menu-bar popover panel,
     /// which must never give Hydra a Dock presence.

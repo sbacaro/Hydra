@@ -29,10 +29,10 @@ else
 fi
 
 # ── Configuration ──────────────────────────────────────────────────────────
-VERSION="0.21.0"
+VERSION="1.0.0"
 TAG="v$VERSION"
-TITLE="Hydra $VERSION beta"
-COMMIT_MSG="Release $TAG: Self-contained updater, XcodeGen migration, HydraRT, hardening"
+TITLE="Hydra $VERSION"
+COMMIT_MSG="Release $TAG: single-process engine, 8 Hydra Audio Bridges, Apple-HIG UI, 5-language localization"
 
 # ── Styling ────────────────────────────────────────────────────────────────
 if [ -t 1 ]; then

@@ -10,8 +10,8 @@
 #
 # Output (dist/):
 #   HydraVirtualSoundcard.driver   the 256×256 backplane (customized BlackHole)
-#   hydrad                         daemon (universal arm64 + x86_64)
-#   HydraApp                       SwiftUI app (universal)
+#   HydraApp                       SwiftUI app + in-process audio engine (universal)
+#   hydra-plugin-host              out-of-process VST host (universal)
 #   BUILD_INFO.txt                 version + build metadata
 
 set -euo pipefail
@@ -50,21 +50,23 @@ DRIVER_BUNDLE="$PROJECT_DIR/Backplane/work/BlackHole/build/$DRIVER_NAME.driver"
 [[ -d "$DRIVER_BUNDLE" ]] || fail "driver bundle not found at $DRIVER_BUNDLE"
 
 # 3. Swift binaries (universal) ---------------------------------------------
-log "Building hydrad + HydraApp (release, arm64 + x86_64) ..."
+log "Building HydraApp + hydra-plugin-host (release, arm64 + x86_64) ..."
+# HydraApp now links the HydraDaemon engine framework, so the single HydraApp
+# binary runs the whole app. hydra-plugin-host stays a separate child process.
 swift build -c release --arch arm64 --arch x86_64
 BIN_PATH="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
-[[ -x "$BIN_PATH/hydrad" && -x "$BIN_PATH/HydraApp" ]] || fail "binaries missing in $BIN_PATH"
+[[ -x "$BIN_PATH/HydraApp" && -x "$BIN_PATH/hydra-plugin-host" ]] || fail "binaries missing in $BIN_PATH"
 
 # Ad-hoc sign so they run on the VM (Apple Silicon requires a signature).
-codesign --force -s - "$BIN_PATH/hydrad"
 codesign --force -s - "$BIN_PATH/HydraApp"
+codesign --force -s - "$BIN_PATH/hydra-plugin-host"
 
 # 4. Stage dist/ -------------------------------------------------------------
 log "Staging dist/ ..."
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 cp -R "$DRIVER_BUNDLE" "$DIST_DIR/"
-cp "$BIN_PATH/hydrad" "$BIN_PATH/HydraApp" "$DIST_DIR/"
+cp "$BIN_PATH/HydraApp" "$BIN_PATH/hydra-plugin-host" "$DIST_DIR/"
 
 VERSION_LINE="$(grep 'public static let version' "$PROJECT_DIR/Sources/HydraCore/HydraConstants.swift" | sed 's/.*"\(.*\)".*/\1/')"
 STAGE_LINE="$(grep 'public static let stage' "$PROJECT_DIR/Sources/HydraCore/HydraConstants.swift" | sed 's/.*"\(.*\)".*/\1/')"
@@ -72,7 +74,7 @@ cat > "$DIST_DIR/BUILD_INFO.txt" <<EOF
 Hydra $VERSION_LINE $STAGE_LINE
 Built: $(date '+%Y-%m-%d %H:%M:%S') on $(hostname) ($(uname -m))
 Driver: $DRIVER_NAME.driver (BlackHole customized — GPL-3.0, see THIRD_PARTY_NOTICES.md)
-Binaries: hydrad, HydraApp (universal, ad-hoc signed)
+Binaries: HydraApp (engine in-process), hydra-plugin-host (universal, ad-hoc signed)
 EOF
 
 log "Done. dist/ contents:"

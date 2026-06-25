@@ -1,22 +1,42 @@
 // ===== HYDRA_OVERRIDES_V5 (vendored for the Xcode driver target) =====
-// Hydra backplane: 256x256 straight loopback (256 in / 256 out). One shared pool
-// of 256 wires; transmitters and receivers allocate from it exclusively (a wire
-// can't be both, due to the loopback). All patching intelligence lives in the
-// Hydra engine, not in this driver.
+// Loopback soundcard: N in / N out (output i → input i) via a shared ring. All
+// patching intelligence lives in the Hydra engine, not in this driver.
 // kHas_Driver_Name_Format=false: exact device name, no "%ich" suffix;
 // UIDs then derive from kDriver_Name (no spaces).
 // The device publishes NO user controls at all (volume/mute/clock-source/
 // pitch entries removed from the object lists below) and a single fixed
-// sample rate, so nothing about the backplane can be changed from Control
-// Center or Audio MIDI Setup — the Hydra app is the only control surface.
+// sample rate, so nothing can be changed from Control Center or Audio MIDI
+// Setup — the Hydra app is the only control surface.
+//
+// MULTI-BRIDGE: these are now DEFAULTS (`#ifndef`-guarded). Each "Hydra Audio
+// Bridge" is built as its own .driver bundle — a tiny wrapper .c (see
+// Backplane/Driver/bridges/) sets kNumber_Of_Channels / kDriver_Name /
+// kDevice_Name / kPlugIn_BundleID / kBox_Aquired and then `#include`s this file.
+// Compiling Hydra.c directly (no wrapper) still yields the legacy single device.
+#ifndef kHas_Driver_Name_Format
 #define kHas_Driver_Name_Format false
+#endif
+#ifndef kNumber_Of_Channels
 #define kNumber_Of_Channels 256
+#endif
+#ifndef kDriver_Name
 #define kDriver_Name "HydraVirtualSoundcard"
+#endif
+#ifndef kDevice_Name
 #define kDevice_Name "Hydra Virtual Soundcard"
+#endif
+#ifndef kPlugIn_BundleID
 #define kPlugIn_BundleID "audio.hydra.virtualsoundcard"
+#endif
+#ifndef kPlugIn_Icon
 #define kPlugIn_Icon "Hydra.icns"
+#endif
+#ifndef kEnableVolumeControl
 #define kEnableVolumeControl false
+#endif
+#ifndef kSampleRates
 #define kSampleRates 48000
+#endif
 // ===== end HYDRA_OVERRIDES_V5 =====
 
 /*

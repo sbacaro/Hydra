@@ -24,7 +24,9 @@ enum SidebarTab: String, CaseIterable {
 struct SidebarView: View {
     @Environment(DaemonClient.self) private var client
     @Binding var tab: SidebarTab
-    @State private var showAddInterface = false
+    /// Selected bridge → its config shows in the inspector (master/detail).
+    @Binding var selectedBridge: String?
+    @State private var showManageBridges = false
     @AppStorage("experimentalModules") private var experimentalModules = false
 
     var body: some View {
@@ -34,31 +36,26 @@ struct SidebarView: View {
                 // MARK: Devices
                 case .devices:
                     Section {
-                        if client.interfaces.isEmpty {
-                            emptyHint("None yet — create your first interface to begin patching.")
+                        let active = client.bridges.filter(\.enabled)
+                        if active.isEmpty {
+                            emptyHint("No bridges on yet. Tap Manage to turn one on.")
                         } else {
-                            ForEach(client.interfaces) { iface in
-                                interfaceRow(iface)
+                            ForEach(active) { bridge in
+                                bridgeRow(bridge)
                             }
                         }
                         Button {
-                            showAddInterface = true
+                            showManageBridges = true
                         } label: {
-                            Label("Add Interface…", systemImage: "plus")
+                            Label("Manage Bridges…", systemImage: "slider.horizontal.3")
                         }
                         .tint(.accentColor)
-                        .sheet(isPresented: $showAddInterface) {
-                            AddInterfaceForm()
+                        .sheet(isPresented: $showManageBridges) {
+                            ManageBridgesSheet().environment(client)
                         }
-                        Text("\(client.allocatedInChannels)/\(Hydra.poolChannels) TX · \(client.allocatedOutChannels)/\(Hydra.poolChannels) RX")
-                            .font(.caption)
-                            .monospacedDigit()
-                            .foregroundStyle(.tertiary)
-                            .listRowSeparator(.hidden)
-                            .help("Independent TX and RX pools of \(Hydra.poolChannels) channels each.")
                     } header: {
-                        sectionHeader("Virtual Interfaces",
-                                      info: "Named blocks of the Hydra Soundcard's 256-channel pool — only these appear in the grid.")
+                        sectionHeader("Bridges",
+                                      info: "Fixed virtual soundcards selectable by any app. Select one to configure it in the inspector; use Manage to turn bridges on or off.")
                     }
 
                     Section {
@@ -92,25 +89,9 @@ struct SidebarView: View {
                 // MARK: Network
                 case .network:
                     Section {
-                        HStack(spacing: 7) {
-                            Image(systemName: client.aes67.ptpLocked
-                                  ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                                .font(.system(size: 11))
-                                .symbolRenderingMode(.hierarchical)
-                                .foregroundStyle(client.aes67.ptpLocked ? Theme.live : Theme.warning)
-                            Text(client.aes67.ptpLocked
-                                 ? "PTP locked · \(client.aes67.ptpGrandmaster)"
-                                 : "PTP: no grandmaster")
-                                .font(.system(size: 12, weight: .semibold))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                        .listRowSeparator(.hidden)
-                        .help(client.aes67.ptpLocked
-                              ? "Following clock — grandmaster \(client.aes67.ptpGrandmaster), domain \(client.aes67.ptpDomain)."
-                              : "No PTP grandmaster — TX free-runs.")
                         if client.aes67.streams.isEmpty {
-                            emptyHint("No AES67 streams announced yet.")
+                            networkPlaceholder("dot.radiowaves.left.and.right",
+                                               "No AES67 streams announced yet.")
                         } else {
                             ForEach(client.aes67.streams) { stream in
                                 streamRow(stream)
@@ -119,6 +100,8 @@ struct SidebarView: View {
                     } header: {
                         sectionHeader("AES67",
                                       info: "Standards-based audio-over-IP. Hydra slaves to PTP and subscribes to SAP-announced multicast streams.")
+                    } footer: {
+                        ptpStatusFooter
                     }
 
                     if experimentalModules {
@@ -153,17 +136,10 @@ struct SidebarView: View {
 
                     Section {
                         if !client.ndi.runtimeAvailable {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("NDI runtime not installed — Hydra loads it dynamically (GPL constraint).")
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
-                                Link("Download NDI Runtime…",
-                                     destination: URL(string: Hydra.ndiRedistURL)!)
-                                    .font(.callout.weight(.semibold))
-                            }
-                            .listRowSeparator(.hidden)
+                            ndiRuntimeNotice
                         } else if client.ndi.sources.isEmpty {
-                            emptyHint("No NDI sources on the network yet\(client.ndi.runtimeVersion.map { " (runtime \($0))" } ?? "").")
+                            networkPlaceholder("antenna.radiowaves.left.and.right",
+                                               "No NDI sources on the network yet.")
                         } else {
                             ForEach(client.ndi.sources) { source in
                                 ndiRow(source)
@@ -171,7 +147,7 @@ struct SidebarView: View {
                         }
                     } header: {
                         sectionHeader("NDI Sources",
-                                      info: "NDI audio sources on the network. Flag a virtual interface as NDI TX to broadcast it.")
+                                      info: "NDI audio sources on the network. Mark a bridge as NDI TX to broadcast it.")
                     }
 
                     if experimentalModules {
@@ -213,7 +189,7 @@ struct SidebarView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             Picker("Section", selection: $tab) {
                 ForEach(SidebarTab.allCases, id: \.self) { t in
-                    Text(t.rawValue).tag(t)
+                    Text(LocalizedStringKey(t.rawValue)).tag(t)
                 }
             }
             .pickerStyle(.segmented)
@@ -229,7 +205,7 @@ struct SidebarView: View {
 
     // MARK: - Section header
 
-    private func sectionHeader(_ title: String, info: String) -> some View {
+    private func sectionHeader(_ title: LocalizedStringKey, info: LocalizedStringKey) -> some View {
         HStack(spacing: 4) {
             Text(title)
             InfoButton(text: info)
@@ -238,7 +214,7 @@ struct SidebarView: View {
 
     // MARK: - Empty hint
 
-    private func emptyHint(_ text: String) -> some View {
+    private func emptyHint(_ text: LocalizedStringKey) -> some View {
         Text(text)
             .font(.callout)
             .foregroundStyle(.secondary)
@@ -247,7 +223,120 @@ struct SidebarView: View {
             .listRowSeparator(.hidden)
     }
 
-    // MARK: - Interface row
+    // MARK: - Network empty placeholder (calm, centered — Apple's empty-state)
+
+    /// A quiet, centered placeholder for an empty network section: a muted SF
+    /// Symbol over one secondary line. Replaces the bare left-flush gray sentence
+    /// so an idle Network tab reads as "nothing here yet", not as an error.
+    private func networkPlaceholder(_ icon: String, _ text: LocalizedStringKey) -> some View {
+        VStack(spacing: 7) {
+            Image(systemName: icon)
+                .font(.system(size: 22, weight: .regular))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.tertiary)
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 20)
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+    }
+
+    // MARK: - Clock sync status (calm — a normal free-run is NOT a warning)
+
+    /// PTP/clock state shown as a quiet section footer (a small dot + caption),
+    /// not a yellow warning row. "No grandmaster" is the normal idle state — TX
+    /// just free-runs — so it gets a neutral dot, never an alert triangle.
+    private var ptpStatusFooter: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(client.aes67.ptpLocked ? Theme.live : Color.secondary)
+                .frame(width: 6, height: 6)
+            Text(client.aes67.ptpLocked
+                 ? "PTP locked · \(client.aes67.ptpGrandmaster)"
+                 : "PTP: no grandmaster")
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .help(client.aes67.ptpLocked
+              ? "Following clock — grandmaster \(client.aes67.ptpGrandmaster), domain \(client.aes67.ptpDomain)."
+              : "No PTP grandmaster — TX free-runs.")
+    }
+
+    // MARK: - NDI runtime call-to-action (calm, with the download action)
+
+    private var ndiRuntimeNotice: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: 22, weight: .regular))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.tertiary)
+            Text("NDI runtime not installed — Hydra loads it dynamically (GPL constraint).")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Link("Download NDI Runtime…", destination: URL(string: Hydra.ndiRedistURL)!)
+                .font(.callout.weight(.semibold))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 18)
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+    }
+
+    // MARK: - Bridge row (lean, selectable → config in the inspector)
+
+    private func bridgeRow(_ bridge: BridgeInfo) -> some View {
+        Button { selectedBridge = bridge.id } label: {
+            HStack(spacing: 9) {
+                Image(systemName: "cable.connector")
+                    .foregroundStyle(bridge.present ? Color.accentColor : .secondary)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(bridge.name)
+                        .font(.callout)
+                        .foregroundStyle(.primary)
+                    Text(bridgeSubtitle(bridge))
+                        .font(.caption2)
+                        .monospacedDigit()
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer(minLength: 6)
+                if !bridge.present {
+                    Image(systemName: "clock")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .help("Activating…")
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(selectedBridge == bridge.id ? Color.accentColor.opacity(0.12) : Color.clear)
+    }
+
+    private func bridgeSubtitle(_ bridge: BridgeInfo) -> String {
+        if bridge.enabled && !bridge.present { return "\(bridge.channels) ch · activating…" }
+        var parts = ["\(bridge.channels) ch"]
+        switch bridge.role {
+        case .input:  parts.append("in")
+        case .output: parts.append("out")
+        case .both:   parts.append("in · out")
+        }
+        if bridge.ndiTX { parts.append("NDI") }
+        if bridge.aes67TX { parts.append("AES67") }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: - Interface row (legacy, unused — kept until fully removed)
 
     private func interfaceRow(_ iface: VirtualInterfaceInfo) -> some View {
         let recording = client.recording(for: iface.id) != nil
@@ -665,7 +754,7 @@ private struct StreamDetailView: View {
 // MARK: - Info balloon
 
 struct InfoButton: View {
-    let text: String
+    let text: LocalizedStringKey
     @State private var open = false
 
     var body: some View {
@@ -708,5 +797,54 @@ struct InfoPopoverButton<Content: View>: View {
         .popover(isPresented: $open, arrowEdge: .trailing) {
             content().frame(width: 300, height: 340)
         }
+    }
+}
+
+// MARK: - Manage Bridges sheet
+
+/// Turn the 8 fixed bridges on/off. Enabled ones appear in the sidebar list.
+struct ManageBridgesSheet: View {
+    @Environment(DaemonClient.self) private var client
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Bridges")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+
+            Divider()
+
+            List {
+                ForEach(client.bridges) { bridge in
+                    HStack(spacing: 11) {
+                        Image(systemName: "cable.connector")
+                            .foregroundStyle(bridge.enabled ? Color.accentColor : .secondary)
+                            .frame(width: 20)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(bridge.name)
+                            Text("\(bridge.channels) in · \(bridge.channels) out")
+                                .font(.caption)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: Binding(
+                            get: { bridge.enabled },
+                            set: { client.setBridgeEnabled(bridge.id, enabled: $0) }))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            .listStyle(.inset)
+        }
+        .frame(width: 380, height: 460)
     }
 }

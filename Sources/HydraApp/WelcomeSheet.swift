@@ -73,11 +73,7 @@ struct WelcomeSheet: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            Text("""
-            A complete audio patch bay for your Mac: route any source to any \
-            destination, capture the sound of individual apps, and connect over \
-            the network with AES67, NDI and VST3 — all in a single virtual soundcard.
-            """)
+            Text("A complete audio patch bay for your Mac: route any source to any destination, capture the sound of individual apps, and connect over the network with AES67, NDI and VST3.")
             .font(.body)
             .multilineTextAlignment(.center)
             .foregroundStyle(.secondary)
@@ -130,7 +126,7 @@ struct WelcomeSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Start at login")
                     .font(.headline)
-                Text("hydrad runs in the background to keep audio alive. Authorize it in Login Items.")
+                Text("Let Hydra open at login so your routing is ready automatically. Enable it in Login Items.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -158,8 +154,8 @@ struct WelcomeSheet: View {
             VStack(spacing: 14) {
                 installRow(
                     icon: "externaldrive.connected.to.line.below",
-                    title: "Hydra Virtual Soundcard",
-                    detail: "The virtual soundcard (HAL driver). Asks for your administrator password.",
+                    title: "Hydra Audio Bridges",
+                    detail: "The audio engine driver (HAL plug-in). Asks for your administrator password.",
                     phase: install.driver,
                     doneText: driverDone ? "Installed" : "Done",
                     retry: { install.installDriver(skipIfPresent: false) }
@@ -212,10 +208,7 @@ struct WelcomeSheet: View {
             }
             Text("All set!")
                 .font(.largeTitle.weight(.bold))
-            Text("""
-            Hydra is configured. Open Audio MIDI Setup to confirm the \
-            “Hydra Virtual Soundcard”, or start creating patches right away.
-            """)
+            Text("Hydra is configured. Open Audio MIDI Setup to see your Hydra Audio Bridges, or start creating patches right away.")
             .font(.body)
             .multilineTextAlignment(.center)
             .foregroundStyle(.secondary)

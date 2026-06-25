@@ -36,5 +36,10 @@
 	<!-- In-app auto-update is handled by Sources/HydraApp/Updater.swift: it
 	     polls the latest GitHub Release, verifies the .pkg against its published
 	     SHA-256, and installs it via an admin prompt. No third-party framework. -->
+	<!-- The audio engine runs in-process and captures the audio of apps the user
+	     chooses via Core Audio process taps; this string is shown in the TCC
+	     prompt. (Moved here from the old hydrad Info.plist.) -->
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Hydra captures the audio of apps you choose so it can be routed in the patch grid.</string>
 </dict>
 </plist>

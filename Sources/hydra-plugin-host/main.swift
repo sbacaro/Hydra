@@ -285,4 +285,14 @@ host.startCommandDrain()
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)   // faceless: no Dock icon, just plugin windows
+
+// An accessory (faceless) app can be put under App Nap, which throttles run-loop
+// timers — that's what used to freeze plugin editors and pushed the old code to
+// promote the host to a regular Dock app. Instead, hold a user-initiated activity
+// for the host's whole lifetime so timers stay lively while we remain faceless.
+// Kept in a long-lived binding so ARC doesn't end the activity immediately.
+let hostActivity = ProcessInfo.processInfo.beginActivity(
+    options: [.userInitiated], reason: "Hosting plugin editor UI")
+_ = hostActivity
+
 app.run()

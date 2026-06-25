@@ -10,7 +10,8 @@ enum BackplaneProbe {
 
     /// Builds the current status by enumerating Core Audio devices.
     static func currentStatus(engineRunning: Bool = false) -> StatusPayload {
-        guard let device = findDevice(named: Hydra.backplaneDeviceName) else {
+        // Resolve by UID (finds the hidden hub) instead of enumerating by name.
+        guard let device = backplaneDeviceID() else {
             return StatusPayload(daemonVersion: Hydra.versionString, backplaneInstalled: false)
         }
         return StatusPayload(
@@ -24,9 +25,31 @@ enum BackplaneProbe {
         )
     }
 
-    /// Core Audio object ID of the backplane, if present.
+    /// Core Audio object ID of the hub, if present. Resolves by UID first
+    /// (works for the HIDDEN hub — a hidden device is not in the enumerated list
+    /// but can be translated from its UID), then falls back to a name search for
+    /// older/visible installs.
     static func backplaneDeviceID() -> AudioObjectID? {
-        findDevice(named: Hydra.backplaneDeviceName)
+        deviceID(forUID: Hydra.backplaneDeviceUID) ?? findDevice(named: Hydra.backplaneDeviceName)
+    }
+
+    /// Translate a device UID to its AudioObjectID without enumerating the device
+    /// list (so it finds hidden devices too).
+    static func deviceID(forUID uid: String) -> AudioObjectID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyTranslateUIDToDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var cfUID = uid as CFString
+        var deviceID = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        let status = withUnsafeMutablePointer(to: &cfUID) { uidPtr in
+            AudioObjectGetPropertyData(
+                AudioObjectID(kAudioObjectSystemObject), &address,
+                UInt32(MemoryLayout<CFString>.size), uidPtr, &size, &deviceID)
+        }
+        guard status == noErr, deviceID != AudioObjectID(kAudioObjectUnknown) else { return nil }
+        return deviceID
     }
 
     // MARK: - Core Audio helpers

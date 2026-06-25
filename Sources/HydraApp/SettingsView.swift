@@ -185,7 +185,7 @@ private struct AudioSettingsPane: View {
             } header: {
                 Text("Engine")
             } footer: {
-                Text("The engine runs at a fixed 48 kHz, 32-bit float. The virtual soundcard always exposes 256 channels; create named virtual interfaces in the sidebar (+ Interface). Open Audio MIDI Setup to confirm the “Hydra Virtual Soundcard” device.")
+                Text("The engine runs at a fixed 48 kHz, 32-bit float. Hydra exposes eight Hydra Audio Bridge devices (2 to 128 channels) that any app can select — turn them on in the sidebar. Open Audio MIDI Setup to see the enabled bridges.")
             }
 
             Section {

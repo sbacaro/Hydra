@@ -390,13 +390,13 @@ bool hydra_vst_open_editor(void *opaque, const char *title)
     __block bool result = false;
     NSString *titleStr = title ? [NSString stringWithUTF8String:title] : nil;
     void (^work)(void) = ^{
-        // The daemon normally runs as an ACCESSORY app (no Dock icon). Accessory
-        // apps show windows but don't reliably deliver mouse/keyboard to them and
-        // don't keep a plugin's redraw timer ticking — so the editor renders once
-        // and then sits frozen like a static image. Promote to a regular
-        // foreground app so the plugin GUI becomes fully interactive.
-        if ([NSApp activationPolicy] != NSApplicationActivationPolicyRegular) {
-            [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        // The host stays an ACCESSORY app (NO Dock icon). Activating it and making
+        // the editor window key gives the plugin GUI full mouse/keyboard; the
+        // redraw timer is kept ticking by a process-wide App Nap opt-out (see the
+        // beginActivity assertion in hydra-plugin-host/main.swift) — so the editor
+        // stays interactive and lively WITHOUT promoting to a regular Dock app.
+        if ([NSApp activationPolicy] != NSApplicationActivationPolicyAccessory) {
+            [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
         }
         if (instance->window) {
             [instance->window makeKeyAndOrderFront:nil];

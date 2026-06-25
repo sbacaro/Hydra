@@ -2,16 +2,22 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- UI-only client of hydrad over ws://127.0.0.1:59731.
-	     Not sandboxed (matches hydrad). -->
+	<!-- The audio engine (HydraDaemon) now runs IN-PROCESS inside this app, so the
+	     app carries the entitlements the old hydrad daemon used to. NOT sandboxed:
+	     it does raw Core Audio HAL, BSD multicast sockets and process taps that App
+	     Sandbox would block. -->
 
-	<!-- The app embeds HydraCore.framework (and friends). With ad-hoc / locally
-	     signed builds the app and its frameworks can carry different Team IDs, and
-	     Hardened Runtime's library validation then refuses to load them
-	     ("different Team IDs"). Disabling library validation lets the app load its
-	     own embedded frameworks regardless of signing — same as hydrad, which sets
-	     this to load third-party VST3 plugins and the NDI/Dante dylibs. -->
+	<!-- The app loads its own embedded frameworks, the proprietary NDI runtime and
+	     the private Dante module (.dylib), plus third-party VST3 plugins — all
+	     signed differently (or not at all) from the app. Library validation would
+	     refuse to load them. (It also lets ad-hoc / locally signed builds load their
+	     own embedded frameworks despite differing Team IDs.) -->
 	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+
+	<!-- Core Audio process taps capture other apps' audio (TCC-gated by
+	     NSAudioCaptureUsageDescription in Info.plist). -->
+	<key>com.apple.security.device.audio-input</key>
 	<true/>
 </dict>
 </plist>

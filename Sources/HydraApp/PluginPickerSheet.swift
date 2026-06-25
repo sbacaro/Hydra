@@ -72,7 +72,13 @@ struct PluginPickerSheet: View {
                             .onTapGesture {
                                 var updated = strip
                                 updated.inserts.append(plugin)
+                                let newIndex = updated.inserts.count - 1
                                 client.setStrip(updated)
+                                // Open the plugin's editor right away — adding an
+                                // insert should show its window, no extra click.
+                                // setStrip + openEditor run in order on the daemon's
+                                // serial queue, so the instance exists by then.
+                                client.openPluginEditor(stripID: strip.id, index: newIndex)
                                 dismiss()
                             }
                     }
@@ -104,9 +110,11 @@ struct PluginPickerSheet: View {
         client.vst.pickerPlugins()
             .filter { plugin in
                 if !searchText.isEmpty {
-                    let match = plugin.name.localizedCaseInsensitiveContains(searchText)
-                        || plugin.vendor.localizedCaseInsensitiveContains(searchText)
-                    if !match { return false }
+                    // Fuzzy (subsequence) match over name + vendor + category, so
+                    // the search is forgiving: "fbpro" finds "FabFilter Pro-Q",
+                    // "cheq" finds "Channel EQ".
+                    let haystack = "\(plugin.name) \(plugin.vendor) \(plugin.category)"
+                    if !haystack.fuzzyMatches(searchText) { return false }
                 }
                 
                 if let cat = selectedCategory, plugin.primaryType != cat {

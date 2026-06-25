@@ -77,28 +77,20 @@ let package = Package(
             path: "Sources/hydra-plugin-host",
             swiftSettings: v5
         ),
-        // Background daemon: all audio/network work lives here.
-        .executableTarget(
-            name: "hydrad",
+        // Audio engine: all audio/network work lives here. Built as a FRAMEWORK
+        // (library) — it runs IN-PROCESS inside Hydra.app via DaemonRuntime.start()
+        // rather than as a separate `hydrad` process. Path stays Sources/hydrad.
+        .target(
+            name: "HydraDaemon",
             dependencies: ["HydraCore", "HydraRT", "HydraVST", "HydraNDIShim", "HydraModuleABI", "HydraPluginHostABI"],
             path: "Sources/hydrad",
-            exclude: ["Info.plist"],
-            swiftSettings: v5,
-            linkerSettings: [
-                // Embed Info.plist (NSAudioCaptureUsageDescription) so the
-                // CLI daemon can request the audio-capture TCC permission.
-                .unsafeFlags([
-                    "-Xlinker", "-sectcreate",
-                    "-Xlinker", "__TEXT",
-                    "-Xlinker", "__info_plist",
-                    "-Xlinker", "Sources/hydrad/Info.plist"
-                ])
-            ]
+            exclude: ["Info.plist", "hydrad.entitlements"],
+            swiftSettings: v5
         ),
-        // SwiftUI app: UI only, client of the daemon.
+        // SwiftUI app + the in-process audio engine (HydraDaemon).
         .executableTarget(
             name: "HydraApp",
-            dependencies: ["HydraCore"],
+            dependencies: ["HydraCore", "HydraDaemon"],
             path: "Sources/HydraApp",
             swiftSettings: v5
         ),

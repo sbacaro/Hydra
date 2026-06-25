@@ -194,27 +194,29 @@ struct GridView: View {
         }
     }
 
-    private func interfaceGroups(direction: String, bankSize: Int) -> [GroupDef] {
-        client.interfaces.flatMap { iface -> [GroupDef] in
-            let count = direction == "in" ? iface.inChannels  : iface.outChannels
-            let base  = direction == "in" ? iface.inBase      : iface.outBase
+    /// Grid groups for the fixed Hydra Audio Bridges. Each enabled+present bridge
+    /// is its OWN node (`bridge:<id>`) with channels 0..<N (in = out = N).
+    private func bridgeGroups(direction: String, bankSize: Int) -> [GroupDef] {
+        client.bridges.filter { bridge in
+            guard bridge.enabled && bridge.present else { return false }
+            // Role decides which axis the bridge shows on (declutters in/out).
+            return direction == "in" ? bridge.role.showsInput : bridge.role.showsOutput
+        }.flatMap { bridge -> [GroupDef] in
+            let count = bridge.channels
             guard count > 0 else { return [] }
-            let scope: ChannelScope = direction == "in" ? .input : .output
+            let node = Hydra.bridgeNodeID(id: bridge.id)
             return banks(
-                nodeID: Hydra.backplaneNodeID,
-                prefix: "if-\(iface.id.uuidString)-\(direction)",
-                count: count, base: base,
-                icon: "rectangle.connected.to.line.below", bankSize: bankSize,
-                namer: { ch in
-                    client.labels.label(scope, base + ch)
-                        ?? (count == 1 ? iface.name : "\(iface.name) \(ch + 1)")
-                },
-                groupNamer: { count <= bankSize ? iface.name : "\(iface.name) \($0 + 1)–\($1)" })
+                nodeID: node,
+                prefix: "br-\(bridge.id)-\(direction)",
+                count: count, base: 0,
+                icon: "cable.connector", bankSize: bankSize,
+                namer: { ch in count == 1 ? bridge.name : "\(bridge.name) \(ch + 1)" },
+                groupNamer: { count <= bankSize ? bridge.name : "\(bridge.name) \($0 + 1)–\($1)" })
         }
     }
 
     private func sourceGroups(bankSize: Int) -> [GroupDef] {
-        var defs = interfaceGroups(direction: "in", bankSize: bankSize)
+        var defs = bridgeGroups(direction: "in", bankSize: bankSize)
         for app in client.apps.filter(\.captured) {
             let name = String(app.name.prefix(12))
             // App captures are 2 mono lanes (L/R), but collapse into ONE stereo
@@ -269,7 +271,7 @@ struct GridView: View {
     }
 
     private func destinationGroups(bankSize: Int) -> [GroupDef] {
-        var defs = interfaceGroups(direction: "out", bankSize: bankSize)
+        var defs = bridgeGroups(direction: "out", bankSize: bankSize)
         for device in client.devices.filter({ $0.used && $0.present && $0.outputChannels > 0 }) {
             let name = String(device.name.prefix(10))
             defs.append(contentsOf: banks(
@@ -720,8 +722,11 @@ struct GridView: View {
                 scroll?.viewport = rect.size
             },
             onViewport: { [weak scroll] size in scroll?.viewport = size },
-            onSingleTap: { row, col in
-                let cell   = GridSelection(source: col, destination: row)
+            onTap: { row, col in
+                let cell = GridSelection(source: col, destination: row)
+                // ⌘/⇧-click: pure selection — add/remove the cell from the batch
+                // selection (and feed the inspector) WITHOUT touching the patch,
+                // so an existing connection's gain can be edited safely.
                 let additive = NSEvent.modifierFlags.contains(.command)
                     || NSEvent.modifierFlags.contains(.shift)
                 if additive {
@@ -732,22 +737,18 @@ struct GridView: View {
                         selectedCells.insert(cell)
                         selection = cell
                     }
-                } else {
-                    selectedCells = [cell]
-                    selection     = cell
+                    return
                 }
-            },
-            onDoubleTap: { row, col in
-                let cell = GridSelection(source: col, destination: row)
+                // Plain click: toggle the patch (Loopback-style) — connect if the
+                // cross-point is empty, disconnect if it already carries one — and
+                // select it so the channel strip follows.
                 if client.cellConnections(source: col, destination: row).isEmpty {
                     client.connectCell(source: col, destination: row)
-                    selection     = cell
-                    selectedCells = [cell]
                 } else {
                     client.disconnectCell(source: col, destination: row)
-                    selectedCells.remove(cell)
-                    if selection == cell { selection = nil }
                 }
+                selection     = cell
+                selectedCells = [cell]
             })
     }
 }
@@ -772,19 +773,9 @@ extension GridView {
     /// Native ContentUnavailableView — adapts to light/dark, matches system language.
     var emptyState: some View {
         ContentUnavailableView {
-            Label("Your Set is Empty", systemImage: "rectangle.connected.to.line.below")
+            Label("Nothing to patch yet", systemImage: "cable.connector")
         } description: {
-            Text("Hydra starts with zero channels — you build your own set.\nCreate a virtual interface (e.g. \"AES67 32×32\", \"OBS 2\"), capture an app, or enable a physical device in the sidebar.")
-        } actions: {
-            Button {
-                showAddInterface = true
-            } label: {
-                Label("Add Interface…", systemImage: "plus")
-            }
-            .buttonStyle(.borderedProminent)
-            .sheet(isPresented: $showAddInterface) {
-                AddInterfaceForm()
-            }
+            Text("Turn on a Hydra Audio Bridge in the sidebar to add it to the grid, capture an app, or enable a physical device.")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -820,6 +811,10 @@ private struct SignalStripCanvas: View {
                 if m.nodeID == Hydra.backplaneNodeID {
                     let flags = output ? signals.outputs : signals.inputs
                     on = m.channel < flags.count && flags[m.channel]
+                } else if !output {
+                    // Transmitter pin: light from the source's OWN audio, so it
+                    // shows the source is live even with no patch made.
+                    on = signals.sources.contains("\(m.nodeID):\(m.channel)")
                 } else {
                     on = m.connIDs.contains { (meters.peaks[$0] ?? 0) > DaemonClient.signalThreshold }
                 }
@@ -844,8 +839,7 @@ private struct CellField: View {
     let selectedCells: Set<GridSelection>
     let onScroll:   (CGRect) -> Void
     let onViewport: (CGSize) -> Void
-    let onSingleTap: (GridEntry, GridEntry) -> Void
-    let onDoubleTap: (GridEntry, GridEntry) -> Void
+    let onTap: (GridEntry, GridEntry) -> Void
 
     @State private var hover: HoverPos?
     @State private var visibleRect: CGRect = .zero
@@ -872,18 +866,11 @@ private struct CellField: View {
                     }
                 }
                 .gesture(
-                    ExclusiveGesture(SpatialTapGesture(count: 2), SpatialTapGesture())
-                        .onEnded { value in
-                            switch value {
-                            case .first(let tap):
-                                guard let row = rows.entry(at: tap.location.y),
-                                      let col = cols.entry(at: tap.location.x) else { return }
-                                onDoubleTap(row, col)
-                            case .second(let tap):
-                                guard let row = rows.entry(at: tap.location.y),
-                                      let col = cols.entry(at: tap.location.x) else { return }
-                                onSingleTap(row, col)
-                            }
+                    SpatialTapGesture()
+                        .onEnded { tap in
+                            guard let row = rows.entry(at: tap.location.y),
+                                  let col = cols.entry(at: tap.location.x) else { return }
+                            onTap(row, col)
                         }
                 )
         }
@@ -894,7 +881,7 @@ private struct CellField: View {
             visibleRect = rect
             onScroll(rect)
         }
-        .help("Double-click: connect / disconnect · click: open the channel strip")
+        .help("Click: connect / disconnect · \u{2318}-click: select (edit gain in the inspector)")
         // onScrollGeometryChange only fires on an actual scroll, so the viewport
         // would stay .zero until the user scrolls — disabling virtualization and
         // rendering every label/SignalDot. Measure it on appear too.
@@ -936,29 +923,40 @@ private struct CellField: View {
             }
         }
 
-        // Group COLUMN bands — mirror the group ROW bands below, so transmitter
-        // (column) and receiver (row) group lanes get the SAME filled treatment
-        // instead of empty gaps on one axis and bands on the other.
+        // Group COLUMN lanes — a quiet fill (no per-cell boxes).
         for colSlot in cols.slots {
             guard case .group = colSlot.item else { continue }
             if cull, colSlot.origin + colSlot.size < left || colSlot.origin > right { continue }
             let rect = CGRect(x: colSlot.origin, y: 0, width: colSlot.size, height: rows.total)
-            context.fill(Path(rect), with: .color(Theme.Grid.groupHeader.opacity(0.25)))
+            context.fill(Path(rect), with: .color(Theme.Grid.groupBand))
         }
 
+        // Channel rows: alternating bands (Numbers/Finder scannability) + cells.
+        // No box per cell — a cell paints only when it has state (connected,
+        // hovered, in the hovered row/column, or selected).
+        var channelRow = 0
         for rowSlot in rows.slots {
-            if cull, rowSlot.origin + rowSlot.size < top || rowSlot.origin > bottom { continue }
-            guard case .channel(let destination) = rowSlot.item else {
-                let rect = CGRect(x: 0, y: rowSlot.origin, width: cols.total, height: rowSlot.size)
-                context.fill(Path(rect), with: .color(Theme.Grid.groupHeader.opacity(0.25)))
+            let isChannelRow = { if case .channel = rowSlot.item { return true } else { return false } }()
+            if cull, rowSlot.origin + rowSlot.size < top || rowSlot.origin > bottom {
+                if isChannelRow { channelRow += 1 }
                 continue
             }
+            guard case .channel(let destination) = rowSlot.item else {
+                let rect = CGRect(x: 0, y: rowSlot.origin, width: cols.total, height: rowSlot.size)
+                context.fill(Path(rect), with: .color(Theme.Grid.groupBand))
+                continue
+            }
+            if channelRow.isMultiple(of: 2) {
+                let band = CGRect(x: 0, y: rowSlot.origin, width: cols.total, height: rowSlot.size)
+                context.fill(Path(band), with: .color(Theme.Grid.rowBand))
+            }
+            channelRow += 1
+
             for colSlot in cols.slots {
                 if cull, colSlot.origin + colSlot.size < left || colSlot.origin > right { continue }
                 guard case .channel(let source) = colSlot.item else { continue }
                 let rect = CGRect(x: colSlot.origin, y: rowSlot.origin,
                                   width: colSlot.size, height: rowSlot.size)
-                let path = Path(roundedRect: rect, cornerRadius: 5, style: .continuous)
 
                 let key        = "\(source.nodeID):\(source.channel)>\(destination.nodeID):\(destination.channel)"
                 let isConnected = connected.contains(key)
@@ -968,27 +966,27 @@ private struct CellField: View {
                 let cellSel    = GridSelection(source: source, destination: destination)
                 let isSelected = selection == cellSel || selectedCells.contains(cellSel)
 
-                let fill: Color = isSelected  ? Theme.Grid.cellSelected
-                    : isHovered              ? Theme.Grid.cellHover
-                    : inCrosshair            ? Theme.Grid.cellCrosshair
-                    : Theme.Grid.cellRest
-
-                context.fill(path, with: .color(fill))
-                if !isSelected {
-                    context.stroke(path, with: .color(Theme.Grid.hairline.opacity(0.6)), lineWidth: 0.5)
-                } else {
+                // Layered fills — no rest fill, no per-cell border.
+                if isSelected {
+                    let path = Path(roundedRect: rect.insetBy(dx: 1, dy: 1),
+                                    cornerRadius: 5, style: .continuous)
+                    context.fill(path, with: .color(Theme.Grid.cellSelected))
                     context.stroke(path, with: .color(Theme.Grid.cellSelectedBorder), lineWidth: 1)
+                } else if isHovered {
+                    context.fill(Path(rect), with: .color(Theme.Grid.cellHover))
+                } else if inCrosshair {
+                    context.fill(Path(rect), with: .color(Theme.Grid.cellCrosshair))
                 }
 
+                // Connection = a soft filled accent circle floating in the cell.
                 if isConnected {
-                    let size: CGFloat = isSelected ? 14 : 12
+                    let size: CGFloat = isSelected ? 13 : 11
                     let dot = CGRect(x: rect.midX - size / 2, y: rect.midY - size / 2,
                                      width: size, height: size)
-                    context.fill(Path(roundedRect: dot, cornerRadius: 3, style: .continuous),
-                                 with: .color(Theme.Grid.patchDot))
+                    context.fill(Path(ellipseIn: dot), with: .color(Theme.Grid.patchDot))
                 } else if isHovered {
                     let ghost = CGRect(x: rect.midX - 4.5, y: rect.midY - 4.5, width: 9, height: 9)
-                    context.stroke(Path(roundedRect: ghost, cornerRadius: 2, style: .continuous),
+                    context.stroke(Path(ellipseIn: ghost),
                                    with: .color(Theme.Grid.patchGhost), lineWidth: 1)
                 }
             }

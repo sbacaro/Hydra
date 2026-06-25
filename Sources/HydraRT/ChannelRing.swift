@@ -33,6 +33,11 @@ public final class ChannelRing {
     private let data: UnsafeMutablePointer<Float>
     private let written = Atomic<Int64>(0)
     private let nominalStep: Double    // producerRate / consumerRate
+    /// Producer and consumer run at the SAME nominal rate (e.g. every virtual
+    /// device + the hub at 48 kHz). The servo only nudges by sub-sample drift, so
+    /// we skip the polyphase sinc and use cheap linear interpolation — ~10× less
+    /// CPU per channel, transparent at unity. Falls back to sinc for real SRC.
+    private let unity: Bool
 
     // Polyphase resampler kernel, built once for the fixed clock ratio. Stored as
     // a raw buffer so the RT loop indexes it without ARC/bounds overhead.
@@ -55,6 +60,7 @@ public final class ChannelRing {
         self.mask = Int64(capacityFrames - 1)
         self.nominalStep = ResampleServo.nominalStep(producerRate: producerRate,
                                                      consumerRate: consumerRate)
+        self.unity = abs(self.nominalStep - 1.0) < 1e-9
         self.data = .allocate(capacity: capacityFrames * channels)
         self.data.initialize(repeating: 0, count: capacityFrames * channels)
 
@@ -136,6 +142,31 @@ public final class ChannelRing {
 
         var pos = readPos
         let chans = channels
+
+        // Unity fast-path: same in/out rate → linear interpolation (2 taps). At a
+        // true integer position this is an exact copy; with sub-sample servo drift
+        // it's a transparent lerp. ~10× cheaper than the polyphase sinc per channel.
+        if unity {
+            var frame = 0
+            while frame < frames {
+                let whole = Int64(pos)
+                let frac = Float(pos - Double(whole))
+                let i0 = Int(whole & mask) * chans
+                let i1 = Int((whole &+ 1) & mask) * chans
+                let out = destination + frame * chans
+                var ch = 0
+                while ch < chans {
+                    let a = data[i0 + ch]
+                    out[ch] = a + (data[i1 + ch] - a) * frac
+                    ch += 1
+                }
+                pos += step
+                frame += 1
+            }
+            readPos = pos
+            return
+        }
+
         let nTaps = taps
         let ctr = Int64(center)
         let nPhases = Double(phases)

@@ -107,18 +107,41 @@ struct MenuBarPanel: View {
     @State private var newSceneName = ""
     @State private var loginTick = 0
 
+    // Minimalist: brand + online/offline + engine load, then Open / Settings.
+    // Everything else (scenes, recording, updates, login) lives inside the app.
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             header
-            metrics
-            quickActions
-            updates
-            recording
-            scenes
-            footer
+            if let status = client.status, client.connectionState == .connected,
+               status.backplaneInstalled {
+                HStack {
+                    Label("Engine load", systemImage: "cpu")
+                        .font(.mbBody)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(Int((status.cpuLoad * 100).rounded()))%")
+                        .font(.mbMetric)
+                        .foregroundStyle(loadTint(LoadSeverity(load: status.cpuLoad)))
+                }
+                .mbCard()
+            }
+            VStack(spacing: 8) {
+                Button { openMainWindow() } label: {
+                    Label("Open Hydra", systemImage: "macwindow")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                SettingsLink {
+                    Label("Settings…", systemImage: "gearshape")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+            }
         }
         .padding(14)
-        .frame(width: 300)
+        .frame(width: 260)
     }
 
     // ── Header ────────────────────────────────────────────────────────────

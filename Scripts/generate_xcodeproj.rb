@@ -14,8 +14,8 @@
 #   HydraVST            framework (C++/ObjC++) — VST3 hosting shim (Steinberg SDK)
 #   HydraNDIShim        framework (C)       — dlopen() facade for the NDI runtime
 #   HydraModuleABI      framework (C)       — generic module plugin ABI
-#   hydrad              app (Swift)         — background daemon (.app, LSUIElement)
-#   HydraApp            app (Swift)         — SwiftUI UI, client of the daemon
+#   HydraDaemon         framework (Swift)   — audio engine, runs in-process in the app
+#   HydraApp            app (Swift)         — SwiftUI UI + the in-process engine
 #   HydraVirtualSoundcard  .driver bundle (C) — 512-wire AudioServerPlugIn backplane
 #   HydraCoreTests      unit test bundle    — XCTest over HydraCore
 
@@ -24,8 +24,8 @@ require 'xcodeproj'
 ROOT       = File.expand_path('..', __dir__)
 PROJ_PATH  = File.join(ROOT, 'Hydra.xcodeproj')
 DEPLOY     = '26.0'
-MARKETING  = '0.21.0'
-BUILD_NUM  = '0.21.0'
+MARKETING  = '1.0.0'
+BUILD_NUM  = '1.0.0'
 SRC_EXT    = %w[.swift .c .m .mm .cpp .cc].freeze
 
 project = Xcodeproj::Project.new(PROJ_PATH)
@@ -38,24 +38,32 @@ project.instance_variable_set(:@object_version, '77')
 # translation. Strings live in Sources/HydraApp/Localizable.xcstrings (String
 # Catalog), auto-extracted at build time (SWIFT_EMIT_LOC_STRINGS=YES on the app).
 project.root_object.development_region = 'en'
-project.root_object.known_regions = %w[en Base pt-BR]
+project.root_object.known_regions = %w[en Base pt-BR es fr de it]
 
-# Stable code-signing identity for SMAppService. The LaunchAgent records a code
-# requirement (LWCR) at registration; with ad-hoc signing ("-") the signature
-# changes every build, so after a rebuild launchd refuses to spawn hydrad
-# (EX_CONFIG / "needs LWCR update"). A self-signed "Hydra Dev" certificate keeps
-# the signature — and thus the LWCR — stable across rebuilds. Create it once in
-# Keychain Access → Certificate Assistant → Create a Certificate
+# Stable code-signing identity. macOS privacy permissions (TCC, e.g. system audio
+# capture) are tied to the app's code signature; with ad-hoc signing ("-") the
+# signature changes every build, so granted permissions reset after a rebuild. A
+# self-signed "Hydra Dev" certificate keeps the signature stable across rebuilds.
+# Create it once in Keychain Access → Certificate Assistant → Create a Certificate
 # (name "Hydra Dev", Identity Type: Self-Signed Root, Certificate Type: Code
 # Signing). Falls back to ad-hoc when the cert isn't present.
 SIGN_ID = `security find-identity -v -p codesigning 2>/dev/null`.include?('"Hydra Dev"') ? 'Hydra Dev' : '-'
 
-# Project-wide: disable Xcode's Run Script sandbox (blocks the VST-SDK fetch) and
-# the clang module verifier (fails on the mixed C/C++/Swift framework targets).
+# Project-wide: ENABLE Xcode's Run Script sandbox — this is Xcode's recommended
+# setting (and what "Update to recommended settings" asks for). The ONLY script
+# phase that writes outside the sandbox is the VST3-SDK fetch, which now lives on
+# its own aggregate target (FetchVST3SDK) with sandboxing turned back OFF there —
+# so every normal target satisfies the recommendation. The clang module verifier
+# stays OFF (it fails on the mixed C/C++/Swift framework targets).
 project.build_configurations.each do |c|
-  c.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'
+  c.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'YES'
   c.build_settings['ENABLE_MODULE_VERIFIER']        = 'NO'
 end
+
+# Stamp the project as reviewed at the current Xcode baseline so Xcode stops
+# nagging with "Update to recommended settings" (Xcode 26.0 → 2600).
+project.root_object.attributes['LastUpgradeCheck']     = '2600'
+project.root_object.attributes['LastSwiftUpdateCheck'] = '2600'
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -136,9 +144,10 @@ def common!(target, bundle_id, extra = {})
     # Frameworks + test bundle have no explicit Info.plist → generate one.
     # App/daemon override this to NO (they pass their own INFOPLIST_FILE).
     s['GENERATE_INFOPLIST_FILE']   = 'YES'
-    # Xcode 14+ sandboxes Run Script phases by default, which blocks our VST-SDK
-    # fetch script from reading itself ("Sandbox: deny file-read-data ...").
-    s['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'
+    # Xcode's recommended default (Run Script sandbox ON). Safe for every normal
+    # target: the only unsandboxed script — the VST3-SDK fetch — is isolated to
+    # the FetchVST3SDK aggregate target.
+    s['ENABLE_USER_SCRIPT_SANDBOXING'] = 'YES'
     extra.each { |k, v| s[k] = v }
   end
 end
@@ -227,6 +236,11 @@ fetch = fetch_target.new_shell_script_build_phase('Fetch VST3 SDK')
 fetch.shell_script = "\"$SRCROOT/Scripts/fetch_vst3sdk.sh\"\n"
 fetch.input_paths  = ['$(SRCROOT)/Scripts/fetch_vst3sdk.sh']
 fetch.output_paths = ['$(SRCROOT)/ThirdParty/vst3sdk/pluginterfaces/base/ipluginbase.h']
+# The fetch git-clones the SDK into $SRCROOT/ThirdParty — outside any sandbox —
+# so THIS target (and only this one) keeps the Run Script sandbox OFF.
+fetch_target.build_configurations.each do |c|
+  c.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'
+end
 vst.add_dependency(fetch_target)
 
 # ---------------------------------------------------------------------------
@@ -234,25 +248,28 @@ vst.add_dependency(fetch_target)
 # ---------------------------------------------------------------------------
 RPATH = '@executable_path/../Frameworks @loader_path/../Frameworks'
 
-daemon = project.new_target(:application, 'hydrad', :osx, DEPLOY, nil, :swift)
-sync_dir(project, daemon, 'Sources/hydrad', exclude: ['Info.plist'])
+# Audio engine — formerly the standalone `hydrad` executable + LaunchAgent. Now a
+# FRAMEWORK linked into the app and started in-process via DaemonRuntime.start(),
+# so the user sees ONE process. Source path stays Sources/hydrad (main.swift is an
+# empty stub). It LINKS the frameworks it uses; the app EMBEDS them all.
+daemon = project.new_target(:framework, 'HydraDaemon', :osx, DEPLOY, nil, :swift)
+sync_dir(project, daemon, 'Sources/hydrad', exclude: ['Info.plist', 'hydrad.entitlements'])
 common!(daemon, 'audio.hydra.daemon', {
-  'INFOPLIST_FILE'         => 'Sources/hydrad/Info.plist',
-  'INFOPLIST_KEY_LSUIElement' => 'YES',
-  'GENERATE_INFOPLIST_FILE'=> 'NO',
-  'CODE_SIGN_ENTITLEMENTS' => 'Sources/hydrad/hydrad.entitlements',
+  'DEFINES_MODULE'         => 'YES',
   'CODE_SIGN_STYLE'        => 'Manual',
   'CODE_SIGN_IDENTITY'     => SIGN_ID,
-  'ENABLE_HARDENED_RUNTIME'=> 'YES',
   'LD_RUNPATH_SEARCH_PATHS'=> "$(inherited) #{RPATH}",
-  'PRODUCT_NAME'           => 'hydrad'
+  'PRODUCT_NAME'           => 'HydraDaemon'
 })
-link_and_embed(daemon, [core, rt, vst, ndishim, moduleabi, pluginhostabi])
+[core, rt, vst, ndishim, moduleabi, pluginhostabi].each do |fw|
+  daemon.add_dependency(fw)
+  daemon.frameworks_build_phase.add_file_reference(fw.product_reference, true)
+end
 
 # Out-of-process VST chain host (crash isolation). Built as an .app so a later
 # iteration can host plugin editor GUIs (AppKit) in the same crashable process.
-# Faceless (LSUIElement). The daemon launches it and talks to it over shared
-# memory (HydraPluginHostABI); a plugin crash kills THIS, not hydrad.
+# Faceless (LSUIElement). The app launches it and talks to it over shared
+# memory (HydraPluginHostABI); a plugin crash kills THIS, not Hydra.
 pluginhost = project.new_target(:application, 'hydra-plugin-host', :osx, DEPLOY, nil, :swift)
 sync_dir(project, pluginhost, 'Sources/hydra-plugin-host')
 common!(pluginhost, 'audio.hydra.pluginhost', {
@@ -266,9 +283,9 @@ common!(pluginhost, 'audio.hydra.pluginhost', {
 link_and_embed(pluginhost, [vst, pluginhostabi])
 
 app = project.new_target(:application, 'HydraApp', :osx, DEPLOY, nil, :swift)
-# Exclude files that must NOT become Copy-Bundle-Resources: the Info.plist
-# (wired via INFOPLIST_FILE) and the LaunchAgent plist (embedded into
-# Contents/Library/LaunchAgents by a bespoke Copy Files phase below).
+# Exclude the Info.plist (wired via INFOPLIST_FILE). The old LaunchAgents plist is
+# no longer used (the engine runs in-process) — exclude it so a stale copy can't
+# become a Copy-Bundle-Resource.
 sync_dir(project, app, 'Sources/HydraApp',
          exclude: ['Info.plist', 'LaunchAgents/audio.hydra.daemon.plist'])
 common!(app, 'audio.hydra.app', {
@@ -289,7 +306,9 @@ common!(app, 'audio.hydra.app', {
   # defaults. The daemon/host keep the nonisolated default (concurrent work).
   'SWIFT_DEFAULT_ACTOR_ISOLATION' => 'MainActor'
 })
-link_and_embed(app, [core])
+# The app now LINKS + EMBEDS the audio engine (HydraDaemon) and every framework it
+# uses, since they're all loaded by this single process.
+link_and_embed(app, [core, daemon, rt, vst, ndishim, moduleabi, pluginhostabi])
 
 # In-app auto-update is implemented in Sources/HydraApp/Updater.swift using only
 # system frameworks (URLSession + CryptoKit + AppKit) — no embedded framework.
@@ -308,10 +327,17 @@ app.resources_build_phase.add_file_reference(app_assets, true)
 # backplane driver (.driver — AudioServerPlugIn bundle)
 # ---------------------------------------------------------------------------
 driver = project.new_target(:bundle, 'HydraVirtualSoundcard', :osx, '11.0', nil, :c)
-# Synchronized: Hydra.c compiles, Hydra.icns is bundled automatically; Hydra.plist
-# is the INFOPLIST_FILE so it must stay out of Copy Bundle Resources.
-sync_dir(project, driver, 'Backplane/Driver', exclude: ['Hydra.plist'])
+# Hidden engine hub: compile ONLY the hub wrapper (HydraEngineHub.c), which
+# #includes Hydra.c and marks the device hidden + renamed "Hydra Engine".
+# Hydra.c and bridges/*.c are #included by their own wrappers, never compiled
+# directly here (that would duplicate the driver's symbols).
+add_dir(project, driver, 'Backplane/Driver', ['HydraEngineHub.c'])
 driver.add_system_framework(%w[CoreAudio CoreFoundation Accelerate])
+# Bundle the plugin icon into Resources.
+hub_icon = driver.new_copy_files_build_phase('Copy Plugin Icon')
+hub_icon.symbol_dst_subfolder_spec = :resources
+hub_icon.dst_path = ''
+hub_icon.add_file_reference(project.new_file('Backplane/Driver/Hydra.icns'), true)
 each_config(driver) do |cfg, s, release|
   s['PRODUCT_BUNDLE_IDENTIFIER'] = 'audio.hydra.virtualsoundcard'
   s['PRODUCT_NAME']              = 'HydraVirtualSoundcard'
@@ -334,6 +360,60 @@ each_config(driver) do |cfg, s, release|
   s['GCC_WARN_TYPECHECK_CALLS_TO_PRINTF'] = 'NO'
 end
 
+# ---------------------------------------------------------------------------
+# Hydra Audio Bridges (8 fixed loopback devices, each its own .driver bundle)
+# ---------------------------------------------------------------------------
+# Each bridge compiles ONLY its wrapper (bridges/HydraBridge_*.c), which sets the
+# per-bridge overrides (channels/name/UID, kBox_Aquired=false) and #includes the
+# shared Hydra.c. Device UIDs differ per bundle (kDriver_Name + "_UID"), so they
+# coexist without colliding. Starts hidden; the Hydra engine acquires the box.
+# Columns: target, wrapper .c, bundle-id suffix, product name, own Info.plist
+# (each plist carries a UNIQUE CFPlugIn factory UUID so the 8 bundles don't
+# collide in coreaudiod's plugin registry).
+HYDRA_BRIDGES = [
+  ['HydraBridge2A',  'HydraBridge_2A.c',  '2a',  'HydraAudioBridge2A',  'Info_2A.plist'],
+  ['HydraBridge2B',  'HydraBridge_2B.c',  '2b',  'HydraAudioBridge2B',  'Info_2B.plist'],
+  ['HydraBridge4',   'HydraBridge_4.c',   '4',   'HydraAudioBridge4',   'Info_4.plist'],
+  ['HydraBridge8',   'HydraBridge_8.c',   '8',   'HydraAudioBridge8',   'Info_8.plist'],
+  ['HydraBridge16',  'HydraBridge_16.c',  '16',  'HydraAudioBridge16',  'Info_16.plist'],
+  ['HydraBridge32',  'HydraBridge_32.c',  '32',  'HydraAudioBridge32',  'Info_32.plist'],
+  ['HydraBridge64',  'HydraBridge_64.c',  '64',  'HydraAudioBridge64',  'Info_64.plist'],
+  ['HydraBridge128', 'HydraBridge_128.c', '128', 'HydraAudioBridge128', 'Info_128.plist'],
+]
+bridge_drivers = HYDRA_BRIDGES.map do |tname, wrapper, idkey, product, plist|
+  bt = project.new_target(:bundle, tname, :osx, '11.0', nil, :c)
+  # Only the wrapper compiles (it #includes ../Hydra.c). The Info plists in the
+  # same folder are referenced via INFOPLIST_FILE, never compiled.
+  add_dir(project, bt, 'Backplane/Driver/bridges', [wrapper])
+  bt.add_system_framework(%w[CoreAudio CoreFoundation Accelerate])
+  # Bundle the plugin icon into Resources.
+  icon = bt.new_copy_files_build_phase('Copy Plugin Icon')
+  icon.symbol_dst_subfolder_spec = :resources
+  icon.dst_path = ''
+  icon.add_file_reference(project.new_file('Backplane/Driver/Hydra.icns'), true)
+  each_config(bt) do |cfg, s, release|
+    s['PRODUCT_BUNDLE_IDENTIFIER'] = "audio.hydra.bridge.#{idkey}"
+    s['PRODUCT_NAME']              = product
+    s['MACOSX_DEPLOYMENT_TARGET']  = '11.0'
+    s['MARKETING_VERSION']         = MARKETING
+    s['CURRENT_PROJECT_VERSION']   = BUILD_NUM
+    s['WRAPPER_EXTENSION']         = 'driver'
+    s['MACH_O_TYPE']               = 'mh_bundle'
+    s['INFOPLIST_FILE']            = "Backplane/Driver/bridges/#{plist}"
+    s['GENERATE_INFOPLIST_FILE']   = 'NO'
+    s['INSTALL_PATH']              = '/Library/Audio/Plug-Ins/HAL'
+    s['SKIP_INSTALL']              = 'YES'
+    s['CODE_SIGN_STYLE']           = 'Manual'
+    s['CODE_SIGN_IDENTITY']        = SIGN_ID
+    s['ARCHS']                     = 'arm64 x86_64'
+    s['ONLY_ACTIVE_ARCH']          = 'NO'
+    s['ALWAYS_SEARCH_USER_PATHS']  = 'NO'
+    s['GCC_WARN_TYPECHECK_CALLS_TO_PRINTF'] = 'NO'
+    s['HEADER_SEARCH_PATHS']       = '$(inherited) $(SRCROOT)/Backplane/Driver'
+  end
+  bt
+end
+
 # Embed the built backplane driver inside HydraApp.app/Contents/Resources so the
 # in-app Welcome flow (InstallManager) can install it to /Library/Audio/Plug-Ins/HAL
 # without shipping a separate file. The app depends on the driver target so it is
@@ -345,31 +425,15 @@ embed_driver.dst_path = ''
 embed_bf = embed_driver.add_file_reference(driver.product_reference, true)
 embed_bf.settings = { 'ATTRIBUTES' => ['CodeSignOnCopy'] }
 
-# Embed the hydrad daemon as a bundled LaunchAgent so SMAppService.agent can
-# register it (RunAtLoad + KeepAlive) and launchd starts it at login / on
-# register. SMAppService REQUIRES the helper to live inside the app bundle:
-#   • hydrad.app → Contents/Library/Helpers/   (BundleProgram path in the plist)
-#   • audio.hydra.daemon.plist → Contents/Library/LaunchAgents/
-# The app depends on the daemon target so it is built first and code-signed on copy.
-app.add_dependency(daemon)
+# The audio engine (HydraDaemon) is no longer a separate process: it's embedded as
+# a framework via link_and_embed(app, …) above, so there is NO Helpers daemon copy
+# and NO LaunchAgent. The old LaunchAgents plist is unused.
 
-embed_helper = app.new_copy_files_build_phase('Embed Daemon Helper')
-embed_helper.symbol_dst_subfolder_spec = :wrapper
-embed_helper.dst_path = 'Contents/Library/Helpers'
-helper_bf = embed_helper.add_file_reference(daemon.product_reference, true)
-helper_bf.settings = { 'ATTRIBUTES' => ['CodeSignOnCopy'] }
-
-embed_agent = app.new_copy_files_build_phase('Embed LaunchAgent')
-embed_agent.symbol_dst_subfolder_spec = :wrapper
-embed_agent.dst_path = 'Contents/Library/LaunchAgents'
-agent_plist = project.new_file('Sources/HydraApp/LaunchAgents/audio.hydra.daemon.plist')
-embed_agent.add_file_reference(agent_plist, true)
-
-# Embed the out-of-process plugin host alongside the daemon in Helpers so the
-# daemon can launch it (RemotePluginHost.defaultHostURL locates it there). The
-# daemon also depends on it so it builds first and is code-signed on copy.
+# Embed the out-of-process plugin host in Contents/Library/Helpers so the engine
+# can launch it (RemotePluginHost.defaultHostURL locates it there). It's still a
+# separate child process (crash isolation), spawned only when a VST is loaded;
+# code-signed on copy.
 app.add_dependency(pluginhost)
-daemon.add_dependency(pluginhost)
 embed_pluginhost = app.new_copy_files_build_phase('Embed Plugin Host')
 embed_pluginhost.symbol_dst_subfolder_spec = :wrapper
 embed_pluginhost.dst_path = 'Contents/Library/Helpers'
@@ -434,7 +498,7 @@ def shared_scheme(project, name, build_target, test_target = nil)
 end
 
 shared_scheme(project, 'HydraApp', app, tests)
-shared_scheme(project, 'hydrad', daemon, tests)
+shared_scheme(project, 'HydraDaemon', daemon, tests)
 shared_scheme(project, 'HydraCore', core, tests)
 shared_scheme(project, 'HydraRTTests', core, rtTests)
 shared_scheme(project, 'HydraVirtualSoundcard.driver', driver)

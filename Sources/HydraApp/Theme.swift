@@ -71,15 +71,22 @@ enum Theme {
     // carries a Light and a Dark value, so the patch grid renders correctly in
     // both appearances instead of assuming a near-black surface.
     enum Grid {
-        static let cellRest           = gridGray(light: 0.04, dark: 0.025)
-        static let cellHover          = gridGray(light: 0.09, dark: 0.09)
-        static let cellCrosshair      = gridGray(light: 0.05, dark: 0.05)
+        // Apple-style: no box per cell. Rest is transparent; the grid reads as
+        // content (dots) in space. Hover/crosshair tint with the ACCENT so the
+        // hovered row+column orient you (Numbers-style), not a neutral gray.
+        static let cellRest           = Color.clear
+        static let cellHover          = gridAccent(light: 0.13, dark: 0.16)
+        static let cellCrosshair      = gridAccent(light: 0.07, dark: 0.09)
         static let cellSelected       = gridAccent(light: 0.16, dark: 0.22)
         static let cellSelectedBorder = gridAccent(light: 0.55, dark: 0.55)
         static let patchDot           = Color(nsColor: .controlAccentColor)
         static let patchGhost         = gridGray(light: 0.32, dark: 0.25)
-        static let separator          = gridGray(light: 0.12, dark: 0.10)
+        static let separator          = gridGray(light: 0.10, dark: 0.09)
         static let groupHeader        = gridGray(light: 0.06, dark: 0.07)
+        /// Faint band on alternating channel rows (Finder/Numbers scannability).
+        static let rowBand            = gridGray(light: 0.022, dark: 0.032)
+        /// Quiet fill behind group lanes (was groupHeader at 0.25 — too heavy).
+        static let groupBand          = gridGray(light: 0.05, dark: 0.06)
         static let textPrimary        = gridGray(light: 0.85, dark: 0.88)
         static let textSecondary      = gridGray(light: 0.55, dark: 0.55)
         static let textTertiary       = gridGray(light: 0.40, dark: 0.30)

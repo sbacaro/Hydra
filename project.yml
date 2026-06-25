@@ -30,13 +30,15 @@ options:
 # Project-wide build settings (mirror common! in the Ruby generator).
 settings:
   base:
-    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    # Xcode's recommended default. The only unsandboxed script — the VST3-SDK
+    # fetch — is isolated to the FetchVST3SDK aggregate target below.
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
     ENABLE_MODULE_VERIFIER: NO
     SWIFT_VERSION: "6.0"
     SWIFT_APPROACHABLE_CONCURRENCY: YES
     SWIFT_STRICT_CONCURRENCY: complete
-    MARKETING_VERSION: "0.21.0"
-    CURRENT_PROJECT_VERSION: "0.21.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1.0.0"
     ALWAYS_SEARCH_USER_PATHS: NO
     CLANG_ENABLE_OBJC_WEAK: YES
     GENERATE_INFOPLIST_FILE: YES
@@ -52,7 +54,68 @@ settings:
       ONLY_ACTIVE_ARCH: NO
       ARCHS: arm64 x86_64
 
+# ── Bridge driver template ──────────────────────────────────────────────────
+# Each Hydra Audio Bridge is its own .driver bundle: a tiny wrapper .c sets the
+# overrides and #includes the shared Backplane/Driver/Hydra.c. They share the
+# Info.plist (Hydra.plist), parameterized by PRODUCT_NAME / bundle id. Device UIDs
+# (kDriver_Name + "_UID") differ per bundle so they don't collide.
+targetTemplates:
+  BridgeDriver:
+    type: bundle
+    platform: macOS
+    deploymentTarget: "11.0"
+    sources:
+      - path: Backplane/Driver/bridges/${wrapper}
+      - path: Backplane/Driver/Hydra.icns
+    dependencies:
+      - sdk: CoreAudio.framework
+      - sdk: CoreFoundation.framework
+      - sdk: Accelerate.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.bridge.${idkey}
+        PRODUCT_NAME: ${product}
+        MACOSX_DEPLOYMENT_TARGET: "11.0"
+        WRAPPER_EXTENSION: driver
+        MACH_O_TYPE: mh_bundle
+        # Each bridge has its OWN Info.plist with a unique CFPlugIn factory UUID,
+        # so the 8 bundles never collide in coreaudiod's plugin registry.
+        INFOPLIST_FILE: Backplane/Driver/bridges/${plist}
+        GENERATE_INFOPLIST_FILE: NO
+        INSTALL_PATH: /Library/Audio/Plug-Ins/HAL
+        SKIP_INSTALL: YES
+        ARCHS: arm64 x86_64
+        ONLY_ACTIVE_ARCH: NO
+        GCC_WARN_TYPECHECK_CALLS_TO_PRINTF: NO
+        HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Backplane/Driver"
+
 targets:
+
+  # ── Hydra Audio Bridges (8 fixed loopback devices) ─────────────────────────
+  HydraBridge2A:
+    templates: [BridgeDriver]
+    templateAttributes: { wrapper: HydraBridge_2A.c,  idkey: "2a",  product: HydraAudioBridge2A,  plist: Info_2A.plist }
+  HydraBridge2B:
+    templates: [BridgeDriver]
+    templateAttributes: { wrapper: HydraBridge_2B.c,  idkey: "2b",  product: HydraAudioBridge2B,  plist: Info_2B.plist }
+  HydraBridge4:
+    templates: [BridgeDriver]
+    templateAttributes: { wrapper: HydraBridge_4.c,   idkey: "4",   product: HydraAudioBridge4,   plist: Info_4.plist }
+  HydraBridge8:
+    templates: [BridgeDriver]
+    templateAttributes: { wrapper: HydraBridge_8.c,   idkey: "8",   product: HydraAudioBridge8,   plist: Info_8.plist }
+  HydraBridge16:
+    templates: [BridgeDriver]
+    templateAttributes: { wrapper: HydraBridge_16.c,  idkey: "16",  product: HydraAudioBridge16,  plist: Info_16.plist }
+  HydraBridge32:
+    templates: [BridgeDriver]
+    templateAttributes: { wrapper: HydraBridge_32.c,  idkey: "32",  product: HydraAudioBridge32,  plist: Info_32.plist }
+  HydraBridge64:
+    templates: [BridgeDriver]
+    templateAttributes: { wrapper: HydraBridge_64.c,  idkey: "64",  product: HydraAudioBridge64,  plist: Info_64.plist }
+  HydraBridge128:
+    templates: [BridgeDriver]
+    templateAttributes: { wrapper: HydraBridge_128.c, idkey: "128", product: HydraAudioBridge128, plist: Info_128.plist }
 
   # ── Libraries ─────────────────────────────────────────────────────────────
   HydraCore:
@@ -130,11 +193,13 @@ targets:
       - sdk: Cocoa.framework
       - sdk: CoreFoundation.framework
       - sdk: Foundation.framework
-    preBuildScripts:
-      - name: Fetch VST3 SDK
-        script: '"$SRCROOT/Scripts/fetch_vst3sdk.sh"'
-        inputFiles: [$(SRCROOT)/Scripts/fetch_vst3sdk.sh]
-        outputFiles: [$(SRCROOT)/ThirdParty/vst3sdk/pluginterfaces/base/ipluginbase.h]
+      # Fetch the VST3 SDK BEFORE compiling, but from a SEPARATE aggregate target
+      # (see aggregateTargets below). Keeping the unsandboxed fetch script OUT of
+      # HydraVST — which has a Copy Headers phase — avoids the "tasks in 'Copy
+      # Headers' are delayed by unsandboxed script phases" warning.
+      - target: FetchVST3SDK
+        link: false
+        embed: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.vst
@@ -148,13 +213,16 @@ targets:
         CLANG_WARN_DOCUMENTATION_COMMENTS: NO
         GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS: NO
 
-  # ── Executables ───────────────────────────────────────────────────────────
-  hydrad:
-    type: application
+  # ── Audio engine (framework, runs IN-PROCESS inside Hydra.app) ─────────────
+  # Formerly the standalone `hydrad` executable + LaunchAgent. Now a framework
+  # linked into the app and started via DaemonRuntime.start(), so the user sees
+  # ONE process. Source path stays Sources/hydrad; main.swift is an empty stub.
+  HydraDaemon:
+    type: framework
     platform: macOS
     sources:
       - path: Sources/hydrad
-        excludes: [Info.plist]
+        excludes: [Info.plist, hydrad.entitlements]
     dependencies:
       - target: HydraCore
       - target: HydraRT
@@ -162,20 +230,14 @@ targets:
       - target: HydraNDIShim
       - target: HydraModuleABI
       - target: HydraPluginHostABI
-      - target: hydra-plugin-host    # built first; embedded into the app, not here
-        embed: false
-        link: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.daemon
-        PRODUCT_NAME: hydrad
-        INFOPLIST_FILE: Sources/hydrad/Info.plist
-        INFOPLIST_KEY_LSUIElement: YES
-        GENERATE_INFOPLIST_FILE: NO
-        CODE_SIGN_ENTITLEMENTS: Sources/hydrad/hydrad.entitlements
-        ENABLE_HARDENED_RUNTIME: YES
+        PRODUCT_NAME: HydraDaemon
+        DEFINES_MODULE: YES
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks"
 
+  # ── Executables ───────────────────────────────────────────────────────────
   hydra-plugin-host:
     type: application
     platform: macOS
@@ -202,34 +264,28 @@ targets:
       - Media.xcassets
     dependencies:
       - target: HydraCore
+      # The audio engine + the frameworks it links — now loaded by THIS process,
+      # so the app links and embeds them all (default embed: true).
+      - target: HydraDaemon
+      - target: HydraRT
+      - target: HydraVST
+      - target: HydraNDIShim
+      - target: HydraModuleABI
+      - target: HydraPluginHostABI
       # Driver bundle → Contents/Resources (code-signed on copy).
       - target: HydraVirtualSoundcard
         embed: false
         copy:
           destination: resources
           codeSign: true
-      # Daemon + plugin host → Contents/Library/Helpers (SMAppService layout).
-      - target: hydrad
-        embed: false
-        copy:
-          destination: wrapper
-          subpath: Contents/Library/Helpers
-          codeSign: true
+      # Out-of-process VST host → Contents/Library/Helpers. Still a separate
+      # child process (crash isolation), spawned only when a VST is loaded.
       - target: hydra-plugin-host
         embed: false
         copy:
           destination: wrapper
           subpath: Contents/Library/Helpers
           codeSign: true
-    # The LaunchAgent plist → Contents/Library/LaunchAgents. XcodeGen has no
-    # first-class file-copy-to-subpath, so a post-build script places it.
-    postBuildScripts:
-      - name: Embed LaunchAgent
-        script: |
-          set -e
-          DEST="$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/Library/LaunchAgents"
-          mkdir -p "$DEST"
-          cp "$SRCROOT/Sources/HydraApp/LaunchAgents/audio.hydra.daemon.plist" "$DEST/"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.app
@@ -243,14 +299,17 @@ targets:
         SWIFT_EMIT_LOC_STRINGS: YES
         SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
 
-  # ── Backplane driver (.driver — AudioServerPlugIn bundle) ──────────────────
+  # ── Engine hub driver (hidden internal device) ─────────────────────────────
+  # Compiles ONLY the hub wrapper (HydraEngineHub.c), which #includes Hydra.c and
+  # marks the device hidden + renamed "Hydra Engine". Hydra.c itself and bridges/
+  # are NOT compiled here (they're #included by their own wrappers).
   HydraVirtualSoundcard:
     type: bundle
     platform: macOS
     deploymentTarget: "11.0"
     sources:
-      - path: Backplane/Driver
-        excludes: [Hydra.plist]
+      - path: Backplane/Driver/HydraEngineHub.c
+      - path: Backplane/Driver/Hydra.icns
     dependencies:
       - sdk: CoreAudio.framework
       - sdk: CoreFoundation.framework
@@ -264,6 +323,7 @@ targets:
         MACH_O_TYPE: mh_bundle
         INFOPLIST_FILE: Backplane/Driver/Hydra.plist
         GENERATE_INFOPLIST_FILE: NO
+        HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Backplane/Driver"
         INSTALL_PATH: /Library/Audio/Plug-Ins/HAL
         SKIP_INSTALL: YES
         ARCHS: arm64 x86_64
@@ -294,6 +354,23 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: audio.hydra.rt.tests
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks"
 
+# ── Aggregate targets ────────────────────────────────────────────────────────
+# Fetches the Steinberg VST3 SDK before HydraVST compiles. It lives on its OWN
+# target (not HydraVST) so the unsandboxed fetch script doesn't trip the "Copy
+# Headers delayed by unsandboxed script phases" warning. The script git-clones
+# into $SRCROOT/ThirdParty — outside any sandbox — so THIS target (and only this
+# one) keeps the Run Script sandbox OFF.
+aggregateTargets:
+  FetchVST3SDK:
+    buildScripts:
+      - name: Fetch VST3 SDK
+        script: '"$SRCROOT/Scripts/fetch_vst3sdk.sh"'
+        inputFiles: [$(SRCROOT)/Scripts/fetch_vst3sdk.sh]
+        outputFiles: [$(SRCROOT)/ThirdParty/vst3sdk/pluginterfaces/base/ipluginbase.h]
+    settings:
+      base:
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+
 schemes:
   HydraApp:
     build:
@@ -303,10 +380,10 @@ schemes:
       config: Debug
     test:
       targets: [HydraCoreTests, HydraRTTests]
-  hydrad:
+  HydraDaemon:
     build:
       targets:
-        hydrad: all
+        HydraDaemon: all
     test:
       targets: [HydraCoreTests, HydraRTTests]
   HydraCore:

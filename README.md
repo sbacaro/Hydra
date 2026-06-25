@@ -9,7 +9,7 @@ NDI over the wire, scenes, recording and OSC remote control.
 [BlackHole](https://github.com/ExistentialAudio/BlackHole) driver (see
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)).
 
-Current version: **0.21.0 beta** (see [`CHANGELOG.md`](CHANGELOG.md)).
+Current version: **1.0.0** (see [`CHANGELOG.md`](CHANGELOG.md)).
 Requires **macOS 26 (Tahoe)**. Full design notes:
 [`PROJETO_HYDRA_FUNDACAO.md`](docs/PROJETO_HYDRA_FUNDACAO.md).
 
@@ -20,16 +20,16 @@ Download the installer from the latest [GitHub release](https://github.com/sbaca
 
 ```bash
 # Download and install
-curl -L https://github.com/sbacaro/Hydra-Soundcard/releases/download/v0.21.0/Hydra-0.21.0.pkg -o Hydra.pkg
+curl -L https://github.com/sbacaro/Hydra-Soundcard/releases/download/v1.0.0/Hydra-1.0.0.pkg -o Hydra.pkg
 open Hydra.pkg
 ```
 
 ### Manual Installation
-Download the [ZIP archive](https://github.com/sbacaro/Hydra-Soundcard/releases/download/v0.21.0/Hydra-0.21.0.zip) and run:
+Download the [ZIP archive](https://github.com/sbacaro/Hydra-Soundcard/releases/download/v1.0.0/Hydra-1.0.0.zip) and run:
 
 ```bash
-unzip Hydra-0.21.0.zip
-cd Hydra-0.21.0
+unzip Hydra-1.0.0.zip
+cd Hydra-1.0.0
 sudo bash install.sh
 ```
 
@@ -56,13 +56,23 @@ You can also check anytime via **Hydra ▸ Check for Updates…**. Maintainers: 
 
 ## Architecture
 
-Hydra ships as a single app that contains everything it needs:
+Hydra runs as a **single process**. The app, the audio engine and the local
+control server all live in `Hydra.app`:
 
-- **`Hydra.app`** — the SwiftUI UI (client only; no audio work happens here).
-- **`hydrad`** — the background daemon (audio engine, device/app/network managers, local WebSocket server on `127.0.0.1:59731`). It's embedded at `/usr/local/hydra/hydrad` and registered as a system LaunchDaemon (`/Library/LaunchDaemons/com.hydra.audio.daemon.plist`). The app starts it on launch and stops it on quit.
-- **`HydraVirtualSoundcard.driver`** — the backplane HAL plugin, installed to `/Library/Audio/Plug‑Ins/HAL` by the installer (admin privileges required).
+- **`Hydra.app`** — the SwiftUI UI **and** the audio engine. The engine
+  (`HydraDaemon`, a framework: audio I/O, device/app/network managers) starts
+  in-process at launch via `DaemonRuntime.start()` and serves a local WebSocket
+  on `127.0.0.1:59731`. The UI is a client of that loopback socket — only now
+  the server runs in the same process, so you see one app in Activity Monitor.
+- **`HydraVirtualSoundcard.driver`** — the backplane HAL plugin, installed to
+  `/Library/Audio/Plug‑Ins/HAL` by the installer (admin privileges required). It
+  loads inside `coreaudiod`, not as a Hydra process.
+- **`hydra-plugin-host`** — a small helper spawned **only while a VST3 plugin is
+  loaded**, so a plugin crash can't take down audio. It exits when no plugins are
+  hosted.
 
-On first run, Hydra requests the necessary permissions (audio capture, microphone access) and automatically starts the daemon.
+On first run, Hydra requests the necessary permissions (audio capture, microphone
+access) and starts the engine automatically.
 
 ## System Requirements
 
@@ -90,32 +100,31 @@ ruby Scripts/generate_xcodeproj.rb   # writes Hydra.xcodeproj
 ```
 
 Open `Hydra.xcodeproj` in Xcode, then **Product → Clean Build Folder** and
-**Run** (⌘R). Building the `HydraApp` scheme also builds and embeds the driver
-and the `hydrad` helper. On first launch, complete the Welcome flow to install
-the soundcard driver.
+**Run** (⌘R). Building the `HydraApp` scheme also builds and embeds the driver,
+the `HydraDaemon` engine framework and the `hydra-plugin-host` helper. On first
+launch, complete the Welcome flow to install the soundcard driver.
 
 ### Code signing (recommended for development)
 
-`SMAppService` (LaunchAgent) and macOS privacy permissions (TCC, e.g. system
-audio capture) are tied to the app's code signature. With ad‑hoc signing (`-`)
-the signature changes every build, so launchd can refuse to spawn `hydrad` and
-granted permissions reset. Create a stable self‑signed certificate once and the
-generator will use it automatically:
+macOS privacy permissions (TCC, e.g. system audio capture) are tied to the app's
+code signature. With ad‑hoc signing (`-`) the signature changes every build, so
+granted permissions reset after a rebuild. Create a stable self‑signed
+certificate once and the generator will use it automatically:
 
 > Keychain Access → Certificate Assistant → Create a Certificate → name
 > **"Hydra Dev"**, Identity Type: *Self‑Signed Root*, Certificate Type:
 > *Code Signing*.
 
 Regenerate the project afterwards. Without the cert, builds fall back to ad‑hoc
-signing (works, but the agent/permissions may need re‑approval after rebuilds).
+signing (works, but permissions may need re‑approval after rebuilds).
 
 ## Project layout
 
 | Path | What |
 |---|---|
 | `Sources/HydraCore` | Shared constants, data model, WebSocket messages (single source of truth) |
-| `Sources/hydrad` | Daemon — audio engine, managers, local WebSocket server, process taps |
-| `Sources/HydraApp` | SwiftUI app — UI client of the daemon (Localizable String Catalog) |
+| `Sources/hydrad` | `HydraDaemon` framework — audio engine, managers, local WebSocket server, process taps. Runs in-process inside the app (`DaemonRuntime.start()`) |
+| `Sources/HydraApp` | SwiftUI app + the in-process engine; UI is a client of the loopback WebSocket (Localizable String Catalog) |
 | `Sources/HydraVST` | VST3 hosting shim (C++ over the Steinberg VST3 SDK) |
 | `Sources/HydraNDIShim` | C facade that `dlopen()`s the proprietary NDI runtime at run time |
 | `Sources/HydraModuleABI` | ABI for external plugin modules (`.dylib`, never bundled) |
@@ -144,7 +153,7 @@ signing (works, but the agent/permissions may need re‑approval after rebuilds)
    over OSC.
 
 Settings, matrix, interfaces, scenes and labels persist under
-`~/Library/Application Support/Hydra/` (JSON), so your setup survives daemon
+`~/Library/Application Support/Hydra/` (JSON), so your setup survives app
 restarts.
 
 > Note: on a loopback soundcard, routing a channel back to itself (In N → Out N)
@@ -179,7 +188,7 @@ restarts.
 
 ### Phase 6: VST3 Channel Strips
 1. Install a VST3 plugin to `/Library/Audio/Plug-Ins/VST3`
-2. Restart daemon
+2. Restart Hydra (or rescan via Settings → Plugins)
 3. Select a source channel
 4. Click Insert → search plugin → select
 5. Plugin editor opens; tweak parameters live
@@ -202,4 +211,4 @@ repository.
 
 ---
 
-**Latest Release:** [Hydra 0.21.0 beta](https://github.com/sbacaro/Hydra-Soundcard/releases/tag/v0.21.0) · Released June 21, 2026
+**Latest Release:** [Hydra 1.0.0](https://github.com/sbacaro/Hydra-Soundcard/releases/tag/v1.0.0) · Released June 25, 2026
