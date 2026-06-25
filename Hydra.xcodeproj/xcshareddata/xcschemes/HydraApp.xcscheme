@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "BB196753ECD8FB91D1D4A8D8"
+               BlueprintIdentifier = "0255E70093B2A4A253BF28BC"
                BuildableName = "HydraApp.app"
                BlueprintName = "HydraApp"
                ReferencedContainer = "container:Hydra.xcodeproj">
@@ -30,7 +30,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "BB196753ECD8FB91D1D4A8D8"
+            BlueprintIdentifier = "0255E70093B2A4A253BF28BC"
             BuildableName = "HydraApp.app"
             BlueprintName = "HydraApp"
             ReferencedContainer = "container:Hydra.xcodeproj">
@@ -41,7 +41,7 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "B8119907754B275E59690E2B"
+               BlueprintIdentifier = "2A32C3AB1B16B2CF3F35C1CD"
                BuildableName = "HydraCoreTests.xctest"
                BlueprintName = "HydraCoreTests"
                ReferencedContainer = "container:Hydra.xcodeproj">
@@ -63,7 +63,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "BB196753ECD8FB91D1D4A8D8"
+            BlueprintIdentifier = "0255E70093B2A4A253BF28BC"
             BuildableName = "HydraApp.app"
             BlueprintName = "HydraApp"
             ReferencedContainer = "container:Hydra.xcodeproj">
@@ -80,7 +80,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "BB196753ECD8FB91D1D4A8D8"
+            BlueprintIdentifier = "0255E70093B2A4A253BF28BC"
             BuildableName = "HydraApp.app"
             BlueprintName = "HydraApp"
             ReferencedContainer = "container:Hydra.xcodeproj">

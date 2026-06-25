@@ -374,6 +374,13 @@ void hydra_vst_set_parameter(void *opaque, uint32_t param_id, double value)
     }
 }
 
+// Number of plugin editor windows currently open in this host process. The host
+// is an accessory (faceless, no Dock icon) app, but some plugin editors need a
+// regular foreground app to create their view — an accessory app can crash them.
+// So we become a regular Dock app WHILE any editor is open and drop back to
+// accessory when the last one closes. Main-thread only — no locking needed.
+static NSInteger gOpenEditors = 0;
+
 bool hydra_vst_open_editor(void *opaque, const char *title)
 {
     auto instance = static_cast<Instance *>(opaque);
@@ -390,21 +397,24 @@ bool hydra_vst_open_editor(void *opaque, const char *title)
     __block bool result = false;
     NSString *titleStr = title ? [NSString stringWithUTF8String:title] : nil;
     void (^work)(void) = ^{
-        // The host stays an ACCESSORY app (NO Dock icon). Activating it and making
-        // the editor window key gives the plugin GUI full mouse/keyboard; the
-        // redraw timer is kept ticking by a process-wide App Nap opt-out (see the
-        // beginActivity assertion in hydra-plugin-host/main.swift) — so the editor
-        // stays interactive and lively WITHOUT promoting to a regular Dock app.
-        if ([NSApp activationPolicy] != NSApplicationActivationPolicyAccessory) {
-            [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+        // The editor opens in whichever process hosts the plugin instance:
+        //   • In-process (Crash Protection OFF) → the MAIN Hydra app, which is a
+        //     regular app: the editor is just a normal app window, exactly like
+        //     the Settings window (one Dock icon — Hydra's).
+        //   • Out-of-process (Crash Protection ON, default) → the faceless host.
+        //     Some plugin editors crash creating their view in an accessory app,
+        //     so the host becomes a regular foreground app WHILE an editor is open
+        //     (view creates cleanly; window behaves like Settings) and drops back
+        //     to accessory when the last editor closes — no persistent Dock icon.
+        BOOL faceless = [[[NSBundle mainBundle] bundleIdentifier]
+                         isEqualToString:@"audio.hydra.pluginhost"];
+        if (faceless) {
+            [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
         }
         if (instance->window) {
-            [NSApp activateIgnoringOtherApps:YES];
+            if (faceless && ![instance->window isVisible]) gOpenEditors++;
             [instance->window makeKeyAndOrderFront:nil];
-            // A faceless (accessory) app can't always bring a window forward via
-            // activation alone on modern macOS — orderFrontRegardless shows it
-            // regardless, which is the documented path for agent/accessory apps.
-            [instance->window orderFrontRegardless];
+            [NSApp activateIgnoringOtherApps:YES];
             result = true;
             return;
         }
@@ -436,11 +446,20 @@ bool hydra_vst_open_editor(void *opaque, const char *title)
 
         instance->view = view;
         instance->window = window;
-        [NSApp activateIgnoringOtherApps:YES];
+        if (faceless) {
+            gOpenEditors++;
+            // When the last editor in the faceless host closes, drop the Dock icon.
+            [[NSNotificationCenter defaultCenter]
+                addObserverForName:NSWindowWillCloseNotification object:window
+                             queue:[NSOperationQueue mainQueue]
+                        usingBlock:^(NSNotification * _Nonnull note) {
+                if (gOpenEditors > 0) gOpenEditors--;
+                if (gOpenEditors == 0)
+                    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+            }];
+        }
         [window makeKeyAndOrderFront:nil];
-        // See note above: accessory apps need orderFrontRegardless to actually
-        // surface the editor window.
-        [window orderFrontRegardless];
+        [NSApp activateIgnoringOtherApps:YES];
         result = true;
     };
     if ([NSThread isMainThread]) {

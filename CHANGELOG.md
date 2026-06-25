@@ -2,6 +2,18 @@
 
 All notable changes to Hydra are documented here.
 
+## [1.0.1] — 2026-06-25
+
+### Fixed
+- **Plugin editor window now opens.** The out-of-process plugin host ran as a
+  faceless (accessory) app, and some VST3 editors crash when their view is
+  created without a foreground app — so the editor never appeared (the plugin
+  was bypassed by crash protection). The host now becomes a regular foreground
+  app **while an editor is open** — the window opens reliably, like any normal
+  app window — and returns to faceless when the last editor closes, so there is
+  still no persistent Dock icon. With Crash Protection turned off, the plugin
+  runs in-process and its editor is a normal Hydra window, just like Settings.
+
 ## [1.0.0] — 2026-06-25
 
 First stable release. Hydra is now a single app process, ships eight selectable

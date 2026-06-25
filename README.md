@@ -9,7 +9,7 @@ NDI over the wire, scenes, recording and OSC remote control.
 [BlackHole](https://github.com/ExistentialAudio/BlackHole) driver (see
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)).
 
-Current version: **1.0.0** (see [`CHANGELOG.md`](CHANGELOG.md)).
+Current version: **1.0.1** (see [`CHANGELOG.md`](CHANGELOG.md)).
 Requires **macOS 26 (Tahoe)**. Full design notes:
 [`PROJETO_HYDRA_FUNDACAO.md`](docs/PROJETO_HYDRA_FUNDACAO.md).
 
@@ -20,16 +20,16 @@ Download the installer from the latest [GitHub release](https://github.com/sbaca
 
 ```bash
 # Download and install
-curl -L https://github.com/sbacaro/Hydra-Soundcard/releases/download/v1.0.0/Hydra-1.0.0.pkg -o Hydra.pkg
+curl -L https://github.com/sbacaro/Hydra-Soundcard/releases/download/v1.0.1/Hydra-1.0.1.pkg -o Hydra.pkg
 open Hydra.pkg
 ```
 
 ### Manual Installation
-Download the [ZIP archive](https://github.com/sbacaro/Hydra-Soundcard/releases/download/v1.0.0/Hydra-1.0.0.zip) and run:
+Download the [ZIP archive](https://github.com/sbacaro/Hydra-Soundcard/releases/download/v1.0.1/Hydra-1.0.1.zip) and run:
 
 ```bash
-unzip Hydra-1.0.0.zip
-cd Hydra-1.0.0
+unzip Hydra-1.0.1.zip
+cd Hydra-1.0.1
 sudo bash install.sh
 ```
 
@@ -211,4 +211,4 @@ repository.
 
 ---
 
-**Latest Release:** [Hydra 1.0.0](https://github.com/sbacaro/Hydra-Soundcard/releases/tag/v1.0.0) · Released June 25, 2026
+**Latest Release:** [Hydra 1.0.1](https://github.com/sbacaro/Hydra-Soundcard/releases/tag/v1.0.1) · Released June 25, 2026
