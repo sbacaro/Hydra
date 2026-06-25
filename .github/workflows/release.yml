@@ -1,8 +1,10 @@
 name: Release
 
-# Cut a release by pushing a version tag, e.g.:
-#   git tag v0.21.0 && git push origin v0.21.0
-# (Scripts/release.sh does this for you.)
+# Releases are cut LOCALLY by Scripts/release.sh (it builds the .pkg, wraps it in
+# a .dmg, tags, and publishes the GitHub Release with the assets + notes). This
+# workflow no longer fires on a tag push — that would race release.sh and try to
+# re-publish the same release. It stays available as a MANUAL fallback only
+# (Actions → Release → Run workflow), e.g. to rebuild a release on CI hardware.
 #
 # This builds the signed-or-unsigned .pkg installer (app + HAL driver), computes
 # its SHA-256, and attaches BOTH to the GitHub Release. The in-app updater
@@ -16,10 +18,11 @@ name: Release
 #   INSTALLER_SIGN_ID  "Developer ID Installer: NAME (TEAMID)"
 
 on:
-  push:
-    tags:
-      - 'v*'
-      - '[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)build & publish, e.g. v1.0.0'
+        required: true
 
 permissions:
   contents: write   # create the release + upload assets
@@ -37,6 +40,8 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.tag }}
 
       - name: Toolchain
         run: |
@@ -83,7 +88,7 @@ jobs:
       - name: Publish GitHub Release (pkg + sha256)
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ inputs.tag }}
           name: Hydra ${{ steps.vars.outputs.version }}
           body_path: release_notes.md
           generate_release_notes: true

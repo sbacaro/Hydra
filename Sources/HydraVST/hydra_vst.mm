@@ -399,8 +399,12 @@ bool hydra_vst_open_editor(void *opaque, const char *title)
             [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
         }
         if (instance->window) {
-            [instance->window makeKeyAndOrderFront:nil];
             [NSApp activateIgnoringOtherApps:YES];
+            [instance->window makeKeyAndOrderFront:nil];
+            // A faceless (accessory) app can't always bring a window forward via
+            // activation alone on modern macOS — orderFrontRegardless shows it
+            // regardless, which is the documented path for agent/accessory apps.
+            [instance->window orderFrontRegardless];
             result = true;
             return;
         }
@@ -432,8 +436,11 @@ bool hydra_vst_open_editor(void *opaque, const char *title)
 
         instance->view = view;
         instance->window = window;
-        [window makeKeyAndOrderFront:nil];
         [NSApp activateIgnoringOtherApps:YES];
+        [window makeKeyAndOrderFront:nil];
+        // See note above: accessory apps need orderFrontRegardless to actually
+        // surface the editor window.
+        [window orderFrontRegardless];
         result = true;
     };
     if ([NSThread isMainThread]) {

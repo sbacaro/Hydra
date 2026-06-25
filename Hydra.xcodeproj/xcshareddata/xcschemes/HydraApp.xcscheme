@@ -14,8 +14,8 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "F9C59252D867C31231299270"
-               BuildableName = "Hydra.app"
+               BlueprintIdentifier = "BB196753ECD8FB91D1D4A8D8"
+               BuildableName = "HydraApp.app"
                BlueprintName = "HydraApp"
                ReferencedContainer = "container:Hydra.xcodeproj">
             </BuildableReference>
@@ -30,8 +30,8 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "F9C59252D867C31231299270"
-            BuildableName = "Hydra.app"
+            BlueprintIdentifier = "BB196753ECD8FB91D1D4A8D8"
+            BuildableName = "HydraApp.app"
             BlueprintName = "HydraApp"
             ReferencedContainer = "container:Hydra.xcodeproj">
          </BuildableReference>
@@ -41,7 +41,7 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "12B8D2E50877321EE34A88D1"
+               BlueprintIdentifier = "B8119907754B275E59690E2B"
                BuildableName = "HydraCoreTests.xctest"
                BlueprintName = "HydraCoreTests"
                ReferencedContainer = "container:Hydra.xcodeproj">
@@ -63,8 +63,8 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "F9C59252D867C31231299270"
-            BuildableName = "Hydra.app"
+            BlueprintIdentifier = "BB196753ECD8FB91D1D4A8D8"
+            BuildableName = "HydraApp.app"
             BlueprintName = "HydraApp"
             ReferencedContainer = "container:Hydra.xcodeproj">
          </BuildableReference>
@@ -80,8 +80,8 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "F9C59252D867C31231299270"
-            BuildableName = "Hydra.app"
+            BlueprintIdentifier = "BB196753ECD8FB91D1D4A8D8"
+            BuildableName = "HydraApp.app"
             BlueprintName = "HydraApp"
             ReferencedContainer = "container:Hydra.xcodeproj">
          </BuildableReference>

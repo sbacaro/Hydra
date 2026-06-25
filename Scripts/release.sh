@@ -30,10 +30,13 @@ else
 fi
 
 # ── Configuration ──────────────────────────────────────────────────────────
-VERSION="1.0.0"
+# The version is read from HydraConstants.swift (single source of truth), so the
+# tag, title and artifact names always match the app — nothing to bump here.
+VERSION="$(sed -nE 's/.*static let version = "([^"]+)".*/\1/p' Sources/HydraCore/HydraConstants.swift | head -1)"
+[ -n "$VERSION" ] || VERSION="0.0.0"
 TAG="v$VERSION"
 TITLE="Hydra $VERSION"
-COMMIT_MSG="Release $TAG: single-process engine, 8 Hydra Audio Bridges, Apple-HIG UI, 5-language localization"
+COMMIT_MSG="Release $TAG"
 
 # ── Styling ────────────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -111,6 +114,19 @@ command -v git >/dev/null || fail "git is required but not installed."
 CURRENT_BRANCH="$(git branch --show-current)"
 header "$MODE"
 
+# ── Full-release tooling + fresh project (before committing) ───────────────
+# Verify everything a full release needs up front, and regenerate the Xcode
+# project so the committed pbxproj matches the current sources + signing.
+if [ "$MODE" = "full" ]; then
+    command -v gh >/dev/null        || fail "GitHub CLI (gh) is required. Install it: brew install gh"
+    gh auth status >/dev/null 2>&1  || fail "gh is not signed in. Run: gh auth login"
+    command -v xcodebuild >/dev/null || fail "xcodebuild not found — install Xcode."
+    command -v hdiutil >/dev/null    || fail "hdiutil not found (macOS is required)."
+    ruby -e "require 'xcodeproj'" >/dev/null 2>&1 \
+        || run "Install xcodeproj gem" gem install xcodeproj --no-document
+    run "Generate Xcode project" ruby Scripts/generate_xcodeproj.rb
+fi
+
 # ── Commit & push (both modes) ─────────────────────────────────────────────
 git add -A
 if git diff --cached --quiet; then
@@ -126,11 +142,6 @@ if [ "$MODE" = "push" ]; then
 fi
 
 # ── Full release: build the installer, then publish to GitHub ──────────────
-# Tools needed only for a full release.
-command -v gh >/dev/null       || fail "GitHub CLI (gh) is required. Install it: brew install gh"
-gh auth status >/dev/null 2>&1 || fail "gh is not signed in. Run: gh auth login"
-command -v hdiutil >/dev/null   || fail "hdiutil not found (macOS is required to build the .dmg)."
-
 DIST="dist"
 PKG="$DIST/Hydra-$VERSION.pkg"
 DMG="$DIST/Hydra-$VERSION.dmg"
