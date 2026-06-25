@@ -3,9 +3,10 @@
 #
 # Two modes (you're asked at start, or pass one as an argument):
 #   push   — stage, commit, and push to the current branch.
-#   full   — push, then (re)tag. GitHub Actions (release.yml) builds the .pkg,
-#            computes its SHA-256, and publishes both to the GitHub Release —
-#            which is what the in-app updater downloads and verifies.
+#   full   — push, build the .pkg locally, wrap it in a .dmg, (re)tag, and
+#            publish a GitHub Release (via the gh CLI) with the .pkg, the .dmg
+#            and the .pkg SHA-256 attached, using this version's CHANGELOG
+#            section as the release notes.
 #
 # Usage:
 #   bash release.sh           # interactive: asks which mode
@@ -86,7 +87,7 @@ if [ -z "$MODE" ]; then
         printf '\n%s  Hydra Release %s%s\n\n' "$BOLD$CYAN" "$VERSION" "$RESET"
         printf '  What would you like to do?\n\n'
         printf '    %s1%s  Push only   %s— commit & push to the current branch%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
-        printf '    %s2%s  Full release %s— push & tag; CI builds the .pkg and publishes%s\n\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+        printf '    %s2%s  Full release %s— build .pkg + .dmg, tag, and publish the GitHub Release%s\n\n' "$BOLD" "$RESET" "$DIM" "$RESET"
         printf '  Choose %s[1/2]%s: ' "$BOLD" "$RESET"
         read -r choice
         case "$choice" in
@@ -105,8 +106,6 @@ else
 fi
 
 # ── Preflight ──────────────────────────────────────────────────────────────
-# A full release no longer needs the gh CLI locally — GitHub Actions builds and
-# publishes the assets when the tag is pushed.
 command -v git >/dev/null || fail "git is required but not installed."
 
 CURRENT_BRANCH="$(git branch --show-current)"
@@ -126,18 +125,57 @@ if [ "$MODE" = "push" ]; then
     exit 0
 fi
 
-# ── Tag & let CI publish (full only) ───────────────────────────────────────
-# Force-recreate + force-push so re-cutting the same version is idempotent
-# (re-pointing the tag at the new commit) instead of failing on "already exists".
+# ── Full release: build the installer, then publish to GitHub ──────────────
+# Tools needed only for a full release.
+command -v gh >/dev/null       || fail "GitHub CLI (gh) is required. Install it: brew install gh"
+gh auth status >/dev/null 2>&1 || fail "gh is not signed in. Run: gh auth login"
+command -v hdiutil >/dev/null   || fail "hdiutil not found (macOS is required to build the .dmg)."
+
+DIST="dist"
+PKG="$DIST/Hydra-$VERSION.pkg"
+DMG="$DIST/Hydra-$VERSION.dmg"
+SHA="$PKG.sha256"
+NOTES="$(mktemp -t hydra-notes.XXXXXX.md)"
+trap 'rm -f "$LOG_FILE" "$NOTES"' EXIT
+
+# Build the installer FIRST — a broken build must never leave an orphan tag.
+run "Build .pkg installer" bash Packaging/build_pkg.sh
+[ -f "$PKG" ] || fail "build did not produce $PKG"
+
+checksum() { ( cd "$DIST" && shasum -a 256 "$(basename "$PKG")" > "$(basename "$SHA")" ); }
+run "Compute SHA-256" checksum
+
+# Wrap the .pkg inside a compressed .dmg (drag-to-install convenience).
+make_dmg() {
+    local stage; stage="$(mktemp -d)"
+    cp "$PKG" "$stage/"
+    rm -f "$DMG"
+    hdiutil create -volname "$TITLE" -srcfolder "$stage" -ov -format UDZO "$DMG" >/dev/null
+    rm -rf "$stage"
+}
+run "Wrap .pkg in .dmg" make_dmg
+
+# Tag this commit and push it (re-pointing an existing tag is idempotent).
 git tag -fd "$TAG" >/dev/null 2>&1 || true
 run "Tag $TAG" git tag -fa "$TAG" -m "$TITLE"
-run "Push tag $TAG (triggers CI build + publish)" git push --force origin "$TAG"
+run "Push tag $TAG" git push --force origin "$TAG"
 
-# The Release workflow (.github/workflows/release.yml) now builds the .pkg,
-# computes its SHA-256, and publishes both to the GitHub Release.
+# Release notes = this version's CHANGELOG section.
+awk "/^## \\[$VERSION/{f=1;next} /^## \\[/{f=0} f" CHANGELOG.md > "$NOTES"
+[ -s "$NOTES" ] || printf 'Hydra %s\n' "$VERSION" > "$NOTES"
+
+# Create the release (or update it if re-cutting), then upload the assets.
+publish() {
+    if gh release view "$TAG" >/dev/null 2>&1; then
+        gh release edit "$TAG" --title "$TITLE" --notes-file "$NOTES" --latest
+    else
+        gh release create "$TAG" --title "$TITLE" --notes-file "$NOTES" --latest
+    fi
+    gh release upload "$TAG" "$PKG" "$DMG" "$SHA" --clobber
+}
+run "Publish GitHub Release (.pkg + .dmg)" publish
+
 REMOTE_URL="$(git remote get-url origin 2>/dev/null || true)"
-ACTIONS_URL="$(printf '%s' "$REMOTE_URL" | sed -E 's#git@github.com:#https://github.com/#; s#\.git$##')/actions"
-
-printf '\n%s  ✓ Tag %s pushed.%s\n' "$GREEN$BOLD" "$TAG" "$RESET"
-printf '  %sGitHub Actions is building & publishing the release:%s\n' "$DIM" "$RESET"
-printf '  %s%s%s\n\n' "$DIM" "$ACTIONS_URL" "$RESET"
+REL_URL="$(printf '%s' "$REMOTE_URL" | sed -E 's#git@github.com:#https://github.com/#; s#\.git$##')/releases/tag/$TAG"
+printf '\n%s  ✓ Release %s published — .pkg + .dmg + SHA-256 attached.%s\n' "$GREEN$BOLD" "$TAG" "$RESET"
+printf '  %s%s%s\n\n' "$DIM" "$REL_URL" "$RESET"
