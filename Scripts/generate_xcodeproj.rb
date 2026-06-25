@@ -277,6 +277,10 @@ common!(pluginhost, 'audio.hydra.pluginhost', {
   'CODE_SIGN_STYLE'        => 'Manual',
   'CODE_SIGN_IDENTITY'     => SIGN_ID,
   'ENABLE_HARDENED_RUNTIME'=> 'YES',
+  # The host loads third-party VST3 .dylibs — under the hardened runtime it needs
+  # the same library-validation exception the app has, or the signed release build
+  # can't open plugin editors (works in a dev build, fails from the .pkg).
+  'CODE_SIGN_ENTITLEMENTS' => 'Sources/hydra-plugin-host/hydra-plugin-host.entitlements',
   'LD_RUNPATH_SEARCH_PATHS'=> "$(inherited) #{RPATH}",
   'PRODUCT_NAME'           => 'hydra-plugin-host'
 })

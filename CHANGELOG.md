@@ -13,6 +13,12 @@ All notable changes to Hydra are documented here.
   app window — and returns to faceless when the last editor closes, so there is
   still no persistent Dock icon. With Crash Protection turned off, the plugin
   runs in-process and its editor is a normal Hydra window, just like Settings.
+- **Plugins now load in the signed release build.** The out-of-process plugin
+  host had the hardened runtime enabled but no entitlements, so library
+  validation blocked third-party VST3 `.dylib`s — plugins (and their editors)
+  worked from a local Xcode build but not from the installed `.pkg`. The host now
+  carries its own `disable-library-validation` + `allow-unsigned-executable-memory`
+  entitlements (matching the main app), so plugins load from the release.
 
 ### Auto-update — hardened
 - The update check no longer collapses every failure into "Could not reach the

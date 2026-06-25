@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "4191E28DB7CF655AEFFC8F96"
+               BlueprintIdentifier = "085DDAC93FFD8091B2947093"
                BuildableName = "HydraCore.framework"
                BlueprintName = "HydraCore"
                ReferencedContainer = "container:Hydra.xcodeproj">
@@ -32,7 +32,7 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "24D8CE8E69F895CD7D07CE07"
+               BlueprintIdentifier = "D79D219A6FF0810271E3B00D"
                BuildableName = "HydraCoreTests.xctest"
                BlueprintName = "HydraCoreTests"
                ReferencedContainer = "container:Hydra.xcodeproj">

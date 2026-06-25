@@ -251,6 +251,10 @@ targets:
         PRODUCT_NAME: hydra-plugin-host
         INFOPLIST_KEY_LSUIElement: YES
         ENABLE_HARDENED_RUNTIME: YES
+        # The host loads third-party VST3 .dylibs — needs the library-validation
+        # exception under the hardened runtime, or the signed release build can't
+        # open plugin editors (works in a dev build, fails from the .pkg).
+        CODE_SIGN_ENTITLEMENTS: Sources/hydra-plugin-host/hydra-plugin-host.entitlements
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks"
 
   HydraApp:

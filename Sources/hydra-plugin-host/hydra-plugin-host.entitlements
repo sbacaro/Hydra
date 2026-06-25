@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The out-of-process VST3 host loads third-party plugin .dylibs that are
+	     signed by other vendors (or unsigned). Under the hardened runtime, library
+	     validation would refuse to load them and the host would fail/crash on load
+	     — so disable it here, exactly like the main app does for its embedded
+	     frameworks and in-process plugins. This is why a plugin editor opens from a
+	     local Xcode build but not from the signed release .pkg. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+
+	<!-- Many audio plugins allocate executable memory (DSP/codegen/JIT). Allow it
+	     so they don't crash on load under the hardened runtime. -->
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+</dict>
+</plist>
