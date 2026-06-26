@@ -89,6 +89,10 @@ extension IconPack {
         let image = NSImage(size: NSSize(width: w, height: height))
         image.lockFocus()
         if let ctx = NSGraphicsContext.current?.cgContext {
+            // SwiftUI Path uses a top-left origin (y down); the NSImage context is
+            // bottom-left (y up) — flip so the wave isn't drawn upside down.
+            ctx.translateBy(x: 0, y: height)
+            ctx.scaleBy(x: 1, y: -1)
             let rect = CGRect(x: 0, y: 0, width: w, height: height)
             let path = WaveMark(widthFraction: 0.96, ampFraction: 0.42).path(in: rect).cgPath
             ctx.setStrokeColor(NSColor.labelColor.cgColor)   // ignored for a template

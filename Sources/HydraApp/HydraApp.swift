@@ -10,6 +10,7 @@
 
 import SwiftUI
 import AppKit
+import Carbon   // kAEOpenApplication / keyAEPropData / keyAELaunchedAsLogInItem
 import HydraCore
 
 // NOTE: no `@main` — see main.swift for the process entry point.
@@ -138,6 +139,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let daemon = DaemonService()
     let updater = Updater()
 
+    /// Captured in `applicationWillFinishLaunching` (while the launch Apple event
+    /// is still current) — whether macOS started Hydra as a login item.
+    private var loginLaunch = false
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        loginLaunch = launchedAtLogin
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Menu-bar-first: no Dock icon at launch.
         NSApp.setActivationPolicy(.accessory)
@@ -149,12 +158,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // locally (no third-party telemetry).
         MetricsReporter.shared.start()
 
-        // First run still presents the onboarding window (see the App's launch
-        // behavior). Since we're an LSUIElement agent, foreground it explicitly so
-        // the Welcome flow appears in front instead of behind other apps.
+        // Window-at-launch policy:
+        //   • first run → the onboarding window opens (.automatic launch behavior);
+        //     foreground it since we're an LSUIElement agent.
+        //   • normal manual launch (Finder/Applications/Spotlight) → open the main
+        //     window (the suppressed launch creates none).
+        //   • launched at login → stay menu-bar-only (no window — "start minimized").
+        let atLogin = loginLaunch
         if !UserDefaults.standard.bool(forKey: "hasSeenWelcome") {
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
+        } else if !atLogin {
+            // Defer to the next run-loop pass so the menu-bar scene is alive to
+            // receive the open request (same path as a Dock/Applications reopen).
+            DispatchQueue.main.async {
+                NSApp.setActivationPolicy(.regular)
+                NSApp.activate(ignoringOtherApps: true)
+                NotificationCenter.default.post(name: .hydraOpenMainWindow, object: nil)
+            }
         }
 
         // Bring hydrad up and connect now, independent of any window.
@@ -191,6 +212,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// which must never give Hydra a Dock presence.
     private func isOrdinaryWindow(_ window: NSWindow) -> Bool {
         !(window is NSPanel) && window.styleMask.contains(.titled) && window.canBecomeMain
+    }
+
+    /// True when THIS launch was started by macOS Login Items ("start at login"),
+    /// rather than the user opening Hydra from Finder/Applications/Spotlight/Dock.
+    /// The open-application Apple event carries `keyAELaunchedAsLogInItem` for a
+    /// login launch. Login launches stay menu-bar-only; manual launches open the
+    /// main window. Read during applicationDidFinishLaunching, while the launch
+    /// event is still current.
+    private var launchedAtLogin: Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent else { return false }
+        return event.eventID == AEEventID(kAEOpenApplication) &&
+            event.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue
+                == OSType(keyAELaunchedAsLogInItem)
     }
 
     @objc private func windowDidBecomeKey(_ note: Notification) {

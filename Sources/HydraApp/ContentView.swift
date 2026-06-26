@@ -196,10 +196,15 @@ struct ContentView: View {
                 Divider().frame(height: 14)
                 let xruns = client.status?.xruns ?? 0
                 let cpu   = Int(((client.status?.cpuLoad ?? 0) * 100).rounded())
+                // Colour by CPU load, not by XRUNs: grey when comfortable, amber
+                // from 50%, red from 75%. (XRUN count stays in the tooltip.)
+                let cpuColor: Color = cpu >= 75 ? Theme.clip
+                                    : cpu >= 50 ? Theme.warning
+                                    : .secondary
                 Text("CPU \(cpu)%")
                     .font(.system(size: 13, design: .monospaced))   // macOS standard 13pt
                     .monospacedDigit()
-                    .foregroundStyle(xruns > 0 ? Theme.warning : .secondary)
+                    .foregroundStyle(cpuColor)
                     .help("Render load · \(xruns) XRUN\(xruns == 1 ? "" : "s") · \(Int((client.status?.sampleRate ?? 0) / 1_000)) kHz")
             }
             Spacer(minLength: 0)

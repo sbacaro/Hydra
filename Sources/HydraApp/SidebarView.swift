@@ -218,9 +218,15 @@ struct SidebarView: View {
         Text(text)
             .font(.callout)
             .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)   // wrap, never truncate
+            .multilineTextAlignment(.leading)
+            // macOS `.sidebar` list rows truncate to one line by default; allow as
+            // many lines as needed so the whole hint shows. The tooltip is a belt-
+            // and-suspenders fallback (Apple shows the full text on hover).
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .listRowSeparator(.hidden)
+            .help(text)
     }
 
     // MARK: - Network empty placeholder (calm, centered — Apple's empty-state)
@@ -238,7 +244,9 @@ struct SidebarView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+                .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
+                .help(text)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
@@ -304,6 +312,8 @@ struct SidebarView: View {
                     Text(bridge.name)
                         .font(.callout)
                         .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .help(bridge.name)
                     Text(bridgeSubtitle(bridge))
                         .font(.caption2)
                         .monospacedDigit()
@@ -463,6 +473,7 @@ struct SidebarView: View {
                 Text(device.name)
                     .foregroundStyle(device.present ? .primary : .secondary)
                     .lineLimit(1)
+                    .help(device.name)
                 HStack(spacing: 8) {
                     Text(deviceKind(device))
                         .font(.caption)
@@ -507,6 +518,7 @@ struct SidebarView: View {
             Text(app.name)
                 .foregroundStyle(app.isPlaying ? .primary : .secondary)
                 .lineLimit(1)
+                .help(app.name)
             Spacer(minLength: 6)
             InfoPopoverButton { AppCaptureDetailView(app: app).environment(client) }
             Toggle("", isOn: Binding(
@@ -531,6 +543,7 @@ struct SidebarView: View {
             Text(stream.name)
                 .foregroundStyle(stream.subscribed ? .primary : .secondary)
                 .lineLimit(1)
+                .help(stream.name)
             Spacer(minLength: 6)
             InfoPopoverButton { StreamDetailView(stream: stream).environment(client) }
             Toggle("", isOn: Binding(
@@ -555,6 +568,7 @@ struct SidebarView: View {
                 Text(source.name)
                     .foregroundStyle(source.subscribed ? .primary : .secondary)
                     .lineLimit(1)
+                    .help(source.name)
                 if source.channels > 0 {
                     Text("\(source.channels) ch @ \(Int(source.sampleRate)) Hz")
                         .font(.caption)
@@ -770,7 +784,13 @@ struct InfoButton: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .lineSpacing(2)
-                .frame(width: 260, alignment: .leading)
+                .multilineTextAlignment(.leading)
+                .lineLimit(nil)
+                // Wrap and grow to fit the whole sentence — a popover is the place
+                // to SHOW the text, so it must never truncate. fixedSize forces the
+                // full multi-line height instead of collapsing to one clipped line.
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: 280, alignment: .leading)
                 .padding(14)
         }
     }

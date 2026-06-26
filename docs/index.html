@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Hydra — An audio patch bay for your Mac</title>
+<meta name="description" content="Hydra is a virtual audio patch bay for macOS: eight selectable audio bridges, per-app capture, VST3, AES67/NDI and OSC — all in one visual matrix. Free and open source." />
+<link rel="icon" href="assets/hydra-icon-180.png" />
+<meta property="og:title" content="Hydra — An audio patch bay for your Mac" />
+<meta property="og:description" content="Route any source to any destination — apps, hardware, plug-ins and the network — in one visual matrix." />
+<meta property="og:image" content="assets/hydra-icon.png" />
+<style>
+  :root{
+    --bg:#0b0b0d; --panel:#151517;
+    --ink:#f5f5f7; --ink-2:#a1a1a6; --ink-3:#6e6e73;
+    --line:rgba(255,255,255,.10);
+    --accent:#2997ff;
+    --radius:20px;
+    --maxw:1040px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Helvetica Neue",Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.5;letter-spacing:-.01em;
+  }
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+  img{display:block;max-width:100%}
+
+  /* Nav */
+  nav{position:sticky;top:0;z-index:50;background:rgba(11,11,13,.72);
+    backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
+    border-bottom:1px solid var(--line)}
+  nav .wrap{display:flex;align-items:center;gap:22px;height:48px}
+  nav .brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:18px;color:var(--ink)}
+  nav .brand img{width:22px;height:22px;border-radius:6px}
+  nav .links{display:flex;gap:22px;margin-left:auto;font-size:13px}
+  nav .links a{color:var(--ink-2)}
+  nav .links a:hover{color:var(--ink);text-decoration:none}
+  .btn{display:inline-block;background:var(--accent);color:#fff;font-size:14px;font-weight:500;
+    padding:7px 16px;border-radius:980px;transition:filter .2s;white-space:nowrap}
+  .btn:hover{filter:brightness(1.08);text-decoration:none}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+  @media(max-width:640px){nav .links{display:none}}
+
+  /* Hero */
+  .hero{text-align:center;padding:92px 24px 0;
+    background:radial-gradient(120% 90% at 50% -10%, #232225 0%, var(--bg) 55%)}
+  .hero .icon{width:118px;height:118px;border-radius:27px;margin:0 auto 28px;
+    box-shadow:0 20px 60px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06)}
+  .hero h1{font-size:clamp(54px,9vw,92px);font-weight:700;letter-spacing:-.03em;line-height:1.02}
+  .hero .tag{font-size:clamp(21px,3.4vw,30px);font-weight:600;margin-top:10px}
+  .hero p.sub{font-size:clamp(16px,2.4vw,20px);color:var(--ink-2);max-width:640px;margin:18px auto 0}
+  .hero .cta{margin-top:32px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+  .hero .meta{margin-top:18px;font-size:13px;color:var(--ink-3)}
+  .hero-shot{max-width:1180px;margin:64px auto 0;padding:0 24px}
+  .hero-shot img{width:100%;border-radius:14px;border:1px solid var(--line);
+    box-shadow:0 40px 90px rgba(0,0,0,.55)}
+
+  /* Feature sections */
+  section.feature{padding:104px 24px;border-top:1px solid var(--line)}
+  section.feature .wrap{display:grid;grid-template-columns:1fr 1fr;gap:54px;align-items:center}
+  section.feature.alt .wrap{direction:rtl}
+  section.feature.alt .copy,section.feature.alt .art,section.feature.alt .shot{direction:ltr}
+  .eyebrow{font-size:13px;font-weight:600;letter-spacing:.02em;color:var(--accent);text-transform:uppercase;margin-bottom:14px}
+  .copy h2{font-size:clamp(30px,4.6vw,44px);font-weight:700;letter-spacing:-.02em;line-height:1.08}
+  .copy p{font-size:clamp(16px,2.2vw,19px);color:var(--ink-2);margin-top:16px;max-width:34em}
+  .shot img, .art{border-radius:var(--radius);border:1px solid var(--line);
+    box-shadow:0 24px 60px rgba(0,0,0,.4);overflow:hidden}
+  .shot img{width:100%}
+  .art{background:linear-gradient(180deg,#1a1a1d,#121214);aspect-ratio:4/3;display:flex;align-items:center;justify-content:center}
+  .art svg{width:100%;height:100%}
+  @media(max-width:760px){
+    section.feature .wrap{grid-template-columns:1fr;gap:26px}
+    section.feature.alt .wrap{direction:ltr}
+    .shot,.art{order:-1}
+  }
+
+  /* Reveal */
+  .reveal{opacity:0;transform:translateY(26px);transition:opacity .7s ease,transform .7s ease}
+  .reveal.in{opacity:1;transform:none}
+  @media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
+
+  /* Specs */
+  .specs{padding:88px 24px;text-align:center;border-top:1px solid var(--line)}
+  .specs h2{font-size:clamp(26px,4vw,38px);font-weight:700;letter-spacing:-.02em}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:42px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:26px 22px;text-align:left}
+  .card h3{font-size:16px;font-weight:600}
+  .card p{font-size:14px;color:var(--ink-2);margin-top:7px}
+  @media(max-width:760px){.grid3{grid-template-columns:1fr}}
+
+  /* Download */
+  .download{padding:110px 24px;text-align:center;border-top:1px solid var(--line);
+    background:radial-gradient(110% 80% at 50% 120%, #232225 0%, var(--bg) 60%)}
+  .download h2{font-size:clamp(34px,5.5vw,56px);font-weight:700;letter-spacing:-.02em}
+  .download p{color:var(--ink-2);font-size:18px;margin-top:14px}
+  .download .cta{margin-top:30px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+
+  /* Footer */
+  footer{padding:54px 24px;color:var(--ink-3);font-size:12px;line-height:1.7}
+  footer .wrap{display:flex;flex-direction:column;gap:18px}
+  footer .row{display:flex;gap:22px;flex-wrap:wrap;align-items:center}
+  footer .row a{color:var(--ink-2)}
+  footer .fine{border-top:1px solid var(--line);padding-top:18px}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="assets/hydra-icon-180.png" alt="Hydra"/>Hydra</a>
+    <div class="links">
+      <a href="#features">Overview</a>
+      <a href="#specs">Specs</a>
+      <a href="https://github.com/sbacaro/Hydra-Soundcard">GitHub</a>
+    </div>
+    <a class="btn" href="#download">Download</a>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <img class="icon" src="assets/hydra-icon.png" alt="Hydra app icon"/>
+  <h1>Hydra</h1>
+  <div class="tag">An audio patch bay for your Mac.</div>
+  <p class="sub">Route any source to any destination — apps, hardware, plug-ins and the network — in one visual matrix. Free and open source.</p>
+  <div class="cta">
+    <a class="btn" href="#download">Download for macOS</a>
+    <a class="btn ghost" href="https://github.com/sbacaro/Hydra-Soundcard">View on GitHub</a>
+  </div>
+  <div class="meta">Version 1.0.3 · GPL‑3.0 · Requires macOS 26 (Tahoe)</div>
+  <div class="hero-shot reveal"><img src="assets/shot-hero.png" alt="The Hydra patch grid with connections and a channel strip"/></div>
+</header>
+
+<main id="features">
+
+  <!-- Bridges -->
+  <section class="feature">
+    <div class="wrap">
+      <div class="copy reveal">
+        <div class="eyebrow">Hydra Audio Bridge</div>
+        <h2>Eight bridges. Any app.</h2>
+        <p>Eight fixed audio devices — from 2 to 128 channels — that any app can pick as its input or output, just like a real interface. Turn the ones you need on; leave the rest off.</p>
+      </div>
+      <div class="shot reveal"><img src="assets/shot-bridges.png" alt="The Hydra Audio Bridge devices in the sidebar"/></div>
+    </div>
+  </section>
+
+  <!-- Grid -->
+  <section class="feature alt">
+    <div class="wrap">
+      <div class="copy reveal">
+        <div class="eyebrow">The grid</div>
+        <h2>Patch like a pro.</h2>
+        <p>A Dante Controller–style matrix. Click a cross‑point to connect a transmitter to a receiver. Channel strips give you gain and VST3 inserts; a pin lights when audio is flowing.</p>
+      </div>
+      <div class="shot reveal"><img src="assets/shot-grid.png" alt="The Hydra patch matrix with connections"/></div>
+    </div>
+  </section>
+
+  <!-- App capture -->
+  <section class="feature">
+    <div class="wrap">
+      <div class="copy reveal">
+        <div class="eyebrow">Per‑app capture</div>
+        <h2>Capture any app.</h2>
+        <p>Grab the sound of a single app with Core Audio process taps. It keeps playing through its normal output while Hydra gets a clean copy you can route, record or stream.</p>
+      </div>
+      <div class="shot reveal"><img src="assets/shot-apps.png" alt="Capturing an app's audio in Hydra"/></div>
+    </div>
+  </section>
+
+  <!-- Plugins -->
+  <section class="feature alt">
+    <div class="wrap">
+      <div class="copy reveal">
+        <div class="eyebrow">VST3 channel strips</div>
+        <h2>Plug‑ins in the signal path.</h2>
+        <p>Insert VST3 plug‑ins on any channel, with live editor windows. By default each strip runs crash‑isolated, so a misbehaving plug‑in can never take the audio down.</p>
+      </div>
+      <div class="shot reveal"><img src="assets/shot-plugin.png" alt="A VST3 plug-in editor open over the Hydra grid"/></div>
+    </div>
+  </section>
+
+  <!-- Network -->
+  <section class="feature">
+    <div class="wrap">
+      <div class="copy reveal">
+        <div class="eyebrow">Audio over IP</div>
+        <h2>Across the network.</h2>
+        <p>AES67 (including Dante® devices in AES67 mode), NDI® and OSC — send and receive audio and control over the wire. Flag any bridge to transmit, and it appears on the network.</p>
+      </div>
+      <div class="art reveal">
+        <svg viewBox="0 0 400 300" aria-hidden="true">
+          <circle cx="200" cy="150" r="14" fill="#2997ff"/>
+          <g fill="none" stroke="rgba(41,151,255,.5)" stroke-width="3">
+            <circle cx="200" cy="150" r="46"/><circle cx="200" cy="150" r="84"/><circle cx="200" cy="150" r="122"/>
+          </g>
+          <g fill="#f5f5f7"><circle cx="78" cy="150" r="7"/><circle cx="322" cy="150" r="7"/><circle cx="200" cy="40" r="7"/><circle cx="200" cy="260" r="7"/></g>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- One app / menu bar -->
+  <section class="feature alt">
+    <div class="wrap">
+      <div class="copy reveal">
+        <div class="eyebrow">Built for the Mac</div>
+        <h2>One app. Five languages.</h2>
+        <p>Hydra runs as a single process — one icon in the Dock, no background daemon. It lives in the menu bar, follows your Mac’s accent colour, and speaks English, Português, Español, Français, Deutsch and Italiano.</p>
+      </div>
+      <div class="shot reveal"><img src="assets/shot-menubar.png" alt="Hydra's menu bar panel showing status"/></div>
+    </div>
+  </section>
+
+</main>
+
+<!-- Specs -->
+<section class="specs" id="specs">
+  <div class="wrap">
+    <h2 class="reveal">Everything in one window.</h2>
+    <div class="grid3">
+      <div class="card reveal"><h3>Patch bay</h3><p>Eight bridges, physical devices and captured apps in one Dante‑style grid.</p></div>
+      <div class="card reveal"><h3>Per‑app capture</h3><p>Core Audio process taps — route a single app without touching the rest.</p></div>
+      <div class="card reveal"><h3>VST3</h3><p>Inserts with live editors, crash‑isolated by default.</p></div>
+      <div class="card reveal"><h3>Network</h3><p>AES67 / Dante, NDI and OSC in and out.</p></div>
+      <div class="card reveal"><h3>Scenes &amp; recording</h3><p>Snapshot the whole matrix; record any output to WAV.</p></div>
+      <div class="card reveal"><h3>Open source</h3><p>GPL‑3.0. Verified, self‑contained in‑app updates.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- Download -->
+<section class="download" id="download">
+  <div class="wrap reveal">
+    <h2>Get Hydra.</h2>
+    <p>Free and open source. Installs the app and its audio driver, then keeps itself up to date.</p>
+    <div class="cta">
+      <a class="btn" href="https://github.com/sbacaro/Hydra-Soundcard/releases/latest">Download for macOS</a>
+      <a class="btn ghost" href="https://github.com/sbacaro/Hydra-Soundcard/blob/main/CHANGELOG.md">Release notes</a>
+    </div>
+    <div class="meta" style="margin-top:18px;color:var(--ink-3);font-size:13px">Version 1.0.3 · macOS 26 (Tahoe) · Apple Silicon &amp; Intel</div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="row">
+      <a href="https://github.com/sbacaro/Hydra-Soundcard">GitHub</a>
+      <a href="https://github.com/sbacaro/Hydra-Soundcard/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="https://github.com/sbacaro/Hydra-Soundcard/blob/main/THIRD_PARTY_NOTICES.md">Third‑party notices</a>
+      <a href="https://github.com/sbacaro/Hydra-Soundcard/issues">Support</a>
+    </div>
+    <div class="fine">
+      Hydra is free software under the GNU General Public License v3.0. The audio backplane is a customized
+      <a href="https://github.com/ExistentialAudio/BlackHole">BlackHole</a> driver.
+      Dante® is a registered trademark of Audinate Pty Ltd. NDI® is a registered trademark of Vizrt NDI AB.
+      VST® is a registered trademark of Steinberg Media Technologies GmbH. Hydra is an independent project and is
+      not affiliated with, sponsored by, or endorsed by Apple Inc., Audinate, Vizrt or Steinberg.
+      © 2026 Hydra Audio.
+    </div>
+  </div>
+</footer>
+
+<script>
+  const io = new IntersectionObserver((entries)=>{
+    for(const e of entries){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} }
+  },{threshold:.16});
+  document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+</script>
+</body>
+</html>

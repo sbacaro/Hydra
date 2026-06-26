@@ -1,15 +1,16 @@
 # Hydra
 
-A virtual audio patch bay for macOS: one virtual soundcard whose channels you
-route freely between apps, hardware, plugins, and the network — all in a single
+A virtual audio patch bay for macOS: eight selectable **Hydra Audio Bridge**
+devices (2 to 128 channels each) that any app can pick as its input or output,
+routed freely between apps, hardware, plugins and the network — all in a single
 visual matrix. Per‑app capture, VST3 in the signal path, AES67 (incl. Dante) and
 NDI over the wire, scenes, recording and OSC remote control.
 
-**GPL‑3.0.** The backplane is a customized
+**GPL‑3.0.** The audio bridges and the hidden engine hub are a customized
 [BlackHole](https://github.com/ExistentialAudio/BlackHole) driver (see
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)).
 
-Current version: **1.0.2** (see [`CHANGELOG.md`](CHANGELOG.md)).
+Current version: **1.0.3** (see [`CHANGELOG.md`](CHANGELOG.md)).
 Requires **macOS 26 (Tahoe)**. Full design notes:
 [`PROJETO_HYDRA_FUNDACAO.md`](docs/PROJETO_HYDRA_FUNDACAO.md).
 
@@ -20,16 +21,16 @@ Download the installer from the latest [GitHub release](https://github.com/sbaca
 
 ```bash
 # Download and install
-curl -L https://github.com/sbacaro/Hydra-Soundcard/releases/download/v1.0.2/Hydra-1.0.2.pkg -o Hydra.pkg
+curl -L https://github.com/sbacaro/Hydra-Soundcard/releases/download/v1.0.3/Hydra-1.0.3.pkg -o Hydra.pkg
 open Hydra.pkg
 ```
 
 ### Manual Installation
-Download the [ZIP archive](https://github.com/sbacaro/Hydra-Soundcard/releases/download/v1.0.2/Hydra-1.0.2.zip) and run:
+Download the [ZIP archive](https://github.com/sbacaro/Hydra-Soundcard/releases/download/v1.0.3/Hydra-1.0.3.zip) and run:
 
 ```bash
-unzip Hydra-1.0.2.zip
-cd Hydra-1.0.2
+unzip Hydra-1.0.3.zip
+cd Hydra-1.0.3
 sudo bash install.sh
 ```
 
@@ -43,16 +44,15 @@ You can also check anytime via **Hydra ▸ Check for Updates…**. Maintainers: 
 
 ## Features
 
-- **256‑channel virtual soundcard** with a Dante Controller–style patch grid — connect any source to any destination by clicking a cell.
-- **Virtual interfaces** — named slices of the channel pool, sized independently per direction (e.g. an AES67 return of 64 in × 2 out).
+- **Eight Hydra Audio Bridges** (2‑A, 2‑B, 4, 8, 16, 32, 64, 128 channels) — fixed loopback devices any app can select as input or output, toggled on/off in the sidebar. Patch them in a Dante Controller–style grid by clicking a cell.
 - **Per‑app capture** — grab the audio of individual apps via Core Audio process taps (macOS 14.4+ API), while the app keeps playing normally.
 - **Physical devices in the grid**, with drift‑corrected resampling (ASRC) across independent clocks.
 - **Stereo ganging** — link an odd+even pair into one stereo lane; it patches and unpatches together (L→L / R→R).
-- **Network audio** — AES67/Dante RX (SAP/SDP + RTP) and experimental AES67 TX; NDI RX/TX via the user‑installed runtime (never bundled — GPL‑safe).
+- **Network audio** — AES67/Dante RX (SAP/SDP + RTP) and experimental AES67 TX; NDI RX/TX via the user‑installed runtime (never bundled — GPL‑safe). Per‑bridge AES67 / NDI transmit.
 - **VST3 channel strips** — inserts + trim with live plugin editor windows.
 - **Scenes** (matrix snapshots), channel labels, WAV recording, and **OSC** remote control.
 - **Menu bar extra** with glanceable status, scene recall and quick actions.
-- **Localized** — English base + Português (Brasil), with an in‑app language switcher.
+- **Localized in five languages** — English, Português (Brasil), Español, Français, Deutsch and Italiano, with an in‑app language switcher.
 
 ## Architecture
 
@@ -64,9 +64,11 @@ control server all live in `Hydra.app`:
   in-process at launch via `DaemonRuntime.start()` and serves a local WebSocket
   on `127.0.0.1:59731`. The UI is a client of that loopback socket — only now
   the server runs in the same process, so you see one app in Activity Monitor.
-- **`HydraVirtualSoundcard.driver`** — the backplane HAL plugin, installed to
-  `/Library/Audio/Plug‑Ins/HAL` by the installer (admin privileges required). It
-  loads inside `coreaudiod`, not as a Hydra process.
+- **HAL drivers** — eight `HydraAudioBridge*.driver` loopback devices plus a
+  hidden `HydraVirtualSoundcard.driver` engine hub, installed to
+  `/Library/Audio/Plug‑Ins/HAL` by the installer (admin privileges required).
+  They load inside `coreaudiod`, not as a Hydra process; the engine attaches a
+  bridge's audio path only while it's patched.
 - **`hydra-plugin-host`** — a small helper spawned **only while a VST3 plugin is
   loaded**, so a plugin crash can't take down audio. It exits when no plugins are
   hosted.
@@ -128,16 +130,17 @@ signing (works, but permissions may need re‑approval after rebuilds).
 | `Sources/HydraVST` | VST3 hosting shim (C++ over the Steinberg VST3 SDK) |
 | `Sources/HydraNDIShim` | C facade that `dlopen()`s the proprietary NDI runtime at run time |
 | `Sources/HydraModuleABI` | ABI for external plugin modules (`.dylib`, never bundled) |
-| `Backplane/` | The 256‑channel virtual soundcard driver (customized BlackHole) |
-| `Media.xcassets` | App icon and accent color |
+| `Backplane/` | The eight Hydra Audio Bridge loopback devices + hidden engine hub (customized BlackHole) |
+| `Media.xcassets` | App icon (the Hydra waveform; the UI follows the macOS system accent) |
 | `Scripts/` | `generate_xcodeproj.rb`, `fetch_vst3sdk.sh`, `host_build.sh`, `install_local.sh` |
 | `Tests/` | Unit tests (parsers, matrix, message round‑trips) |
 
 ## Using it
 
-1. **Create a virtual interface** (sidebar → **Add Interface…**), or enable a
-   physical device under **Devices**, or capture an app under **Apps**. Only
-   channels you add appear in the grid.
+1. **Turn on a Hydra Audio Bridge** (sidebar → **Manage Bridges…**), or enable a
+   physical device under **Devices**, or capture an app under **Apps**. Only the
+   bridges/devices/apps you add appear in the grid; point any app at a bridge in
+   its own audio settings.
 2. **Patch** by clicking a grid cell (transmitter column → receiver row), or
    from a cell's **channel strip** in the Inspector (Connect / Remove, gain,
    meters).
@@ -147,52 +150,18 @@ signing (works, but permissions may need re‑approval after rebuilds).
 4. **Channel strips:** select a channel or cell to rename, link stereo, and add
    **VST3 inserts** with live editor windows.
 5. **Network:** under **Network**, subscribe to AES67/Dante streams or NDI
-   sources; flag a virtual interface as AES67/NDI **TX** to broadcast it.
+   sources; flag a bridge as AES67/NDI **TX** to broadcast it.
 6. **Scenes / recording / OSC:** save and recall matrix snapshots, record any
    interface's output to WAV, and drive Hydra from consoles/TouchOSC/Stream Deck
    over OSC.
 
-Settings, matrix, interfaces, scenes and labels persist under
+Settings, matrix, scenes, labels and channel strips persist under
 `~/Library/Application Support/Hydra/` (JSON), so your setup survives app
 restarts.
 
-> Note: on a loopback soundcard, routing a channel back to itself (In N → Out N)
-> creates a feedback loop. Feedback protection (Settings → General) blocks these
+> Note: on a loopback bridge, routing a channel back to itself (In N → Out N)
+> creates a feedback loop. Feedback protection (Settings → Safety) blocks these
 > by default.
-
-## Testing Phases
-
-### Phase 2: Basic Grid Routing
-1. Set an app's output to "Hydra Virtual Soundcard"
-2. Play audio
-3. In Hydra, patch In 1 → Out 3, In 2 → Out 4
-4. Verify audio appears at outputs 3–4
-
-### Phase 2b: Physical Devices + Drift Correction
-1. Enable a physical device in Devices tab
-2. Patch Hydra inputs to the device
-3. Play for several minutes — no clicks or drift
-
-### Phase 3: Per-App Capture
-1. Open Apps tab
-2. Find a playing app (green speaker icon)
-3. Toggle capture (allows audio-capture permission on first use)
-4. App appears as two source rows (L/R)
-5. Patch to speaker or monitor
-
-### Phase 4: AES67 Reception (requires Dante hardware)
-1. Enable bridged networking on VM
-2. Dante device in AES67 mode appears in Network tab
-3. Multicast flow appears under Streams
-4. Toggle subscribe → audio flows through grid
-
-### Phase 6: VST3 Channel Strips
-1. Install a VST3 plugin to `/Library/Audio/Plug-Ins/VST3`
-2. Restart Hydra (or rescan via Settings → Plugins)
-3. Select a source channel
-4. Click Insert → search plugin → select
-5. Plugin editor opens; tweak parameters live
-6. Audio processes in real-time
 
 ## Support & Feedback
 
@@ -211,4 +180,4 @@ repository.
 
 ---
 
-**Latest Release:** [Hydra 1.0.2](https://github.com/sbacaro/Hydra-Soundcard/releases/tag/v1.0.2) · Released June 25, 2026
+**Latest Release:** [Hydra 1.0.3](https://github.com/sbacaro/Hydra-Soundcard/releases/tag/v1.0.3) · Released June 25, 2026

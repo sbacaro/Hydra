@@ -2,6 +2,17 @@
 
 All notable changes to Hydra are documented here.
 
+## [1.0.3] — 2026-06-25
+
+### Polish & fixes
+- **Window-at-launch.** Opening Hydra from Finder/Applications/Spotlight now opens
+  its window; starting at login still stays in the menu bar (no window).
+- **No more clipped text.** Sidebar descriptions and the ⓘ info popovers wrap to
+  show the whole sentence, and truncated names reveal their full text on hover.
+- **The CPU meter colour now tracks load**, not XRUNs: grey below 50%, amber from
+  50%, red from 75% (the XRUN count stays in the tooltip).
+- Fixed the menu-bar waveform glyph rendering upside down.
+
 ## [1.0.2] — 2026-06-25
 
 ### Brand & appearance
@@ -12,6 +23,11 @@ All notable changes to Hydra are documented here.
 - **Follows the macOS accent.** With the brand mark now neutral, the UI tint is
   the accent the user chose in System Settings instead of a hard-coded indigo —
   and the patch grid, selections and toggles are finally all consistent.
+
+### Launch behaviour
+- **Opening Hydra from Finder/Applications/Spotlight now opens its window** (it had
+  been launching to just the menu bar). **Starting at login still stays in the
+  menu bar** (no window) — the two are told apart by the login-item launch event.
 
 ## [1.0.1] — 2026-06-25
 
