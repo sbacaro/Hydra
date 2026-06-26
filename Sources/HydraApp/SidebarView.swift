@@ -306,7 +306,7 @@ struct SidebarView: View {
         Button { selectedBridge = bridge.id } label: {
             HStack(spacing: 9) {
                 Image(systemName: "cable.connector")
-                    .foregroundStyle(bridge.present ? Color.accentColor : .secondary)
+                    .foregroundStyle(bridge.present ? .secondary : .tertiary)
                     .frame(width: 18)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(bridge.name)
@@ -465,7 +465,7 @@ struct SidebarView: View {
     private func deviceRow(_ device: PhysicalDeviceInfo) -> some View {
         HStack(spacing: 8) {
             Image(systemName: deviceIcon(device))
-                .foregroundStyle(device.present ? Theme.live : .secondary)
+                .foregroundStyle(device.present ? .secondary : .tertiary)
                 .frame(width: 20)
                 .help(device.present ? "Connected"
                                      : "Offline — patches kept, re-binds on return")
@@ -512,7 +512,7 @@ struct SidebarView: View {
     private func appRow(_ app: AppInfo) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "macwindow")
-                .foregroundStyle(app.isPlaying ? Theme.live : .secondary)
+                .foregroundStyle(app.isPlaying ? .secondary : .tertiary)
                 .frame(width: 18)
                 .help(app.isPlaying ? "Playing audio" : "Silent")
             Text(app.name)
@@ -537,7 +537,7 @@ struct SidebarView: View {
     private func streamRow(_ stream: Aes67Stream) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "network")
-                .foregroundStyle(stream.subscribed ? Theme.live : .secondary)
+                .foregroundStyle(stream.subscribed ? .secondary : .tertiary)
                 .frame(width: 18)
                 .help(stream.subscribed ? "Subscribed" : "Available")
             Text(stream.name)
@@ -562,7 +562,7 @@ struct SidebarView: View {
     private func ndiRow(_ source: NdiSourceInfo) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "antenna.radiowaves.left.and.right")
-                .foregroundStyle(source.subscribed ? Theme.live : .secondary)
+                .foregroundStyle(source.subscribed ? .secondary : .tertiary)
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 1) {
                 Text(source.name)
@@ -591,7 +591,7 @@ struct SidebarView: View {
     private func moduleSourceRow(_ source: ModuleSourceInfo) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "puzzlepiece.extension")
-                .foregroundStyle(source.subscribed ? Theme.live : .secondary)
+                .foregroundStyle(source.subscribed ? .secondary : .tertiary)
                 .frame(width: 18)
             Text(source.channels > 0 ? "\(source.name) · \(source.channels)ch" : source.name)
                 .foregroundStyle(source.subscribed ? .primary : .secondary)

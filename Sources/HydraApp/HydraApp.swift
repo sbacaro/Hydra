@@ -52,6 +52,8 @@ struct HydraApp: App {
         // Native Settings window (Apple HIG): a real, listable window with proper
         // title-bar chrome and the standard toolbar pane switcher — instead of a
         // sheet whose tab strip bled into the main window behind it.
+        // `.windowLevel(.floating)` keeps it above the main Hydra window so it never
+        // gets buried behind it while the user is adjusting settings.
         Settings {
             SettingsView()
                 .environment(client)
@@ -60,11 +62,14 @@ struct HydraApp: App {
                 .environmentObject(daemon)
                 .environmentObject(updater)
         }
+        .windowLevel(.floating)
 
+        // About floats above the main window too, so it stays in front when invoked.
         Window("About Hydra", id: "about") {
             AboutView()
         }
         .windowResizability(.contentSize)
+        .windowLevel(.floating)
 
         // Menu bar: status at a glance + scene quick-switch (Section 7.3).
         MenuBarExtra {

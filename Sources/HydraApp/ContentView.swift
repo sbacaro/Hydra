@@ -90,7 +90,7 @@ struct ContentView: View {
                 updateBanner(version: version)
             }
         }
-        .overlay(alignment: .topTrailing) { toastsOverlay }
+        .overlay(alignment: .bottomLeading) { toastsOverlay }
         .overlay {
             if showPalette { paletteOverlay }
         }
@@ -283,28 +283,40 @@ struct ContentView: View {
     // MARK: - Toast notifications
 
     private var toastsOverlay: some View {
-        VStack(alignment: .trailing, spacing: 6) {
-            ForEach(client.toasts) { event in
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(client.toasts) { item in
                 HStack(spacing: 8) {
-                    Image(systemName: iconName(for: event.kind))
+                    Image(systemName: iconName(for: item.kind))
                         .font(.system(size: 13))
-                        .foregroundStyle(color(for: event.kind))
-                    Text(event.message)
+                        .foregroundStyle(color(for: item.kind))
+                    Text(item.message)
                         .font(.callout)
                         .lineLimit(2)
+                    if item.count > 1 {
+                        Text("\(item.count)")
+                            .font(.caption2.weight(.semibold))
+                            .monospacedDigit()
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(.quaternary, in: Capsule())
+                            .help("Repeated \(item.count) times")
+                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
-                .frame(maxWidth: 340, alignment: .leading)
+                .frame(maxWidth: 360, alignment: .leading)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(.separator, lineWidth: 0.5))
-                .transition(.move(edge: .trailing).combined(with: .opacity))
+                .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+                .contentShape(RoundedRectangle(cornerRadius: 10))
+                .onTapGesture { client.dismissToast(item.id) }
+                .help("Click to dismiss")
+                .transition(.move(edge: .leading).combined(with: .opacity))
             }
         }
-        .padding(.top, 16)
-        .padding(.trailing, 14)
+        .padding(.leading, 14)
+        .padding(.bottom, 14)
         .animation(.easeOut(duration: 0.2), value: client.toasts)
-        .allowsHitTesting(false)
     }
 
     // MARK: - ⌘K palette

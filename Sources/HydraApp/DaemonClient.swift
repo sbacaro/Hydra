@@ -40,6 +40,16 @@ final class SignalFlags {
     }
 }
 
+/// A transient on-screen toast. Distinct from `HydraEvent` (the durable log entry)
+/// because a toast also carries a coalesced repeat `count` and its own `expiry`.
+struct ToastItem: Identifiable, Equatable {
+    let id: UUID
+    let kind: HydraEvent.Kind
+    let message: String
+    var count: Int
+    var expiry: Date
+}
+
 @MainActor
 @Observable
 final class DaemonClient {
@@ -67,7 +77,11 @@ final class DaemonClient {
     private(set) var stripMeters: [UUID: StripMeters] = [:]
     /// Event log (latest first) + transient toasts.
     private(set) var events: [HydraEvent] = []
-    private(set) var toasts: [HydraEvent] = []
+    /// Transient, coalesced toasts (at most `maxToasts`). The full history stays
+    /// in `events`, behind the bell.
+    private(set) var toasts: [ToastItem] = []
+    private static let maxToasts = 3
+    private var toastSweep: Task<Void, Never>?
     private(set) var config = ConfigPayload()
     /// User-created virtual interfaces (named slices of the soundcard pool).
     /// LEGACY — being replaced by `bridges` (fixed multi-device set).
@@ -278,6 +292,19 @@ final class DaemonClient {
     func disconnectCell(source: GridEntry, destination: GridEntry) {
         for connection in cellConnections(source: source, destination: destination) {
             removeConnection(connection)
+        }
+    }
+
+    /// Pre-flight: would connecting this cell create a feedback loop? Runs the same
+    /// pure `PatchValidation` rule the engine enforces, against the current matrix,
+    /// so the UI can refuse the patch inline (at the Connect button) before sending
+    /// — no round-trip, and the daemon never has to emit a rejection.
+    func cellWouldFeedback(source: GridEntry, destination: GridEntry) -> Bool {
+        channelPairs(source: source, destination: destination).contains { srcCh, dstCh in
+            let new = Connection(
+                source: PatchPoint(nodeID: source.nodeID, channelIndex: srcCh),
+                destination: PatchPoint(nodeID: destination.nodeID, channelIndex: dstCh))
+            return PatchValidation.wouldFeedback(adding: new, existing: connections)
         }
     }
 
@@ -506,14 +533,55 @@ final class DaemonClient {
         scheduleReconnect()
     }
 
-    /// Transient toast: shown for a few seconds, then removed (the full
-    /// history stays in `events`, behind the bell).
+    /// Transient toast. Repeats of the same message coalesce into one (with a
+    /// count) instead of stacking; at most `maxToasts` are shown; each lives a few
+    /// seconds (longer for warnings/errors). The full history stays in `events`,
+    /// behind the bell.
     private func showToast(_ event: HydraEvent) {
-        toasts.append(event)
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(5))
-            self?.toasts.removeAll { $0.id == event.id }
+        let expiry = Date().addingTimeInterval(Self.toastTTL(for: event.kind))
+        if let i = toasts.firstIndex(where: { $0.message == event.message && $0.kind == event.kind }) {
+            // Coalesce: bump the counter, refresh the timer, move it to the most
+            // recent slot — never stack a duplicate.
+            var item = toasts.remove(at: i)
+            item.count += 1
+            item.expiry = expiry
+            toasts.append(item)
+        } else {
+            toasts.append(ToastItem(id: event.id, kind: event.kind, message: event.message,
+                                    count: 1, expiry: expiry))
+            if toasts.count > Self.maxToasts {
+                toasts.removeFirst(toasts.count - Self.maxToasts)
+            }
         }
+        startToastSweep()
+    }
+
+    /// How long a toast lingers, by severity. Warnings/errors stay long enough to
+    /// read twice; routine status clears quickly.
+    private static func toastTTL(for kind: HydraEvent.Kind) -> TimeInterval {
+        switch kind {
+        case .error, .warning: return 6
+        default:               return 3.5
+        }
+    }
+
+    /// A single low-frequency sweeper drops expired toasts (cheaper and tidier
+    /// than one timer per toast, and it lets coalescing reset a toast's clock).
+    private func startToastSweep() {
+        guard toastSweep == nil else { return }
+        toastSweep = Task { @MainActor [weak self] in
+            while true {
+                try? await Task.sleep(for: .milliseconds(400))
+                guard let self else { return }
+                self.toasts.removeAll { $0.expiry <= Date() }
+                if self.toasts.isEmpty { self.toastSweep = nil; return }
+            }
+        }
+    }
+
+    /// Dismiss a toast immediately (click-to-dismiss in the overlay).
+    func dismissToast(_ id: UUID) {
+        toasts.removeAll { $0.id == id }
     }
 
     private func scheduleReconnect() {

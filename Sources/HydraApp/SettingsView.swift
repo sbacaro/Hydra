@@ -230,6 +230,16 @@ private struct PluginsSettingsPane: View {
     @State private var typeFilter   = ""
     @State private var vendorFilter = ""
 
+    // Pre-filtered, pre-sorted rows with their availability/favorite state baked
+    // in. Rebuilt only when an input actually changes (search, filters, the VST
+    // payload) — never during scrolling. Previously `filtered` re-filtered AND
+    // re-sorted the whole library on every access and was read once per row (for
+    // the divider), so layout was O(n²·log n) and the list stuttered on fast
+    // scroll with a large library.
+    @State private var rows:          [PluginRowModel] = []
+    @State private var typeOptions:   [String] = []
+    @State private var vendorOptions: [String] = []
+
     var body: some View {
         Form {
             Section {
@@ -290,14 +300,14 @@ private struct PluginsSettingsPane: View {
 
                     Picker("", selection: $typeFilter) {
                         Text("All types").tag("")
-                        ForEach(types, id: \.self) { Text($0).tag($0) }
+                        ForEach(typeOptions, id: \.self) { Text($0).tag($0) }
                     }
                     .labelsHidden()
                     .frame(width: 110)
 
                     Picker("", selection: $vendorFilter) {
                         Text("All makers").tag("")
-                        ForEach(vendors, id: \.self) { Text($0).tag($0) }
+                        ForEach(vendorOptions, id: \.self) { Text($0).tag($0) }
                     }
                     .labelsHidden()
                     .frame(width: 130)
@@ -305,7 +315,7 @@ private struct PluginsSettingsPane: View {
                 .padding(.vertical, 2)
 
                 // Plug-in list
-                if filtered.isEmpty {
+                if rows.isEmpty {
                     VStack {
                         Spacer()
                         ContentUnavailableView(
@@ -328,11 +338,12 @@ private struct PluginsSettingsPane: View {
                             .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
                     )
                 } else {
+                    let lastID = rows.last?.id
                     ScrollView {
                         LazyVStack(spacing: 0) {
-                            ForEach(filtered) { plugin in
-                                PluginRow(plugin: plugin)
-                                if plugin.id != filtered.last?.id {
+                            ForEach(rows) { row in
+                                PluginRow(model: row).equatable()
+                                if row.id != lastID {
                                     Divider()
                                 }
                             }
@@ -353,6 +364,41 @@ private struct PluginsSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear { rebuild() }
+        .onChange(of: search)       { rebuild() }
+        .onChange(of: typeFilter)   { rebuild() }
+        .onChange(of: vendorFilter) { rebuild() }
+        .onChange(of: client.vst)   { rebuild() }
+    }
+
+    /// Recompute the filtered/sorted rows and the filter menus. Called only on
+    /// real input changes (search, filters, a new scan, a toggled state) — not
+    /// while scrolling. Lookups use Sets so building the rows is linear.
+    private func rebuild() {
+        let plugins = client.vst.available
+        let hidden  = Set(client.vst.disabledIDs)
+        let favs    = Set(client.vst.favoriteIDs)
+
+        typeOptions   = Array(Set(plugins.map(\.primaryType))).sorted()
+        vendorOptions = Array(Set(plugins.map { $0.vendor.isEmpty ? "Unknown" : $0.vendor })).sorted()
+
+        let result = plugins.filter { p in
+            (search.isEmpty
+                || p.name.localizedCaseInsensitiveContains(search)
+                || p.vendor.localizedCaseInsensitiveContains(search))
+            && (typeFilter.isEmpty   || p.primaryType == typeFilter)
+            && (vendorFilter.isEmpty || (p.vendor.isEmpty ? "Unknown" : p.vendor) == vendorFilter)
+        }.sorted { a, b in
+            let fa = favs.contains(a.id)
+            let fb = favs.contains(b.id)
+            if fa != fb { return fa }
+            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }
+        rows = result.map {
+            PluginRowModel(plugin: $0,
+                           available: !hidden.contains($0.id),
+                           favorite:  favs.contains($0.id))
+        }
     }
 
     private func chooseVSTFolder() {
@@ -365,26 +411,6 @@ private struct PluginsSettingsPane: View {
         }
     }
 
-    private var vendors: [String] {
-        Array(Set(client.vst.available.map { $0.vendor.isEmpty ? "Unknown" : $0.vendor })).sorted()
-    }
-    private var types: [String] {
-        Array(Set(client.vst.available.map(\.primaryType))).sorted()
-    }
-    private var filtered: [VSTPlugin] {
-        client.vst.available.filter { p in
-            (search.isEmpty
-                || p.name.localizedCaseInsensitiveContains(search)
-                || p.vendor.localizedCaseInsensitiveContains(search))
-            && (typeFilter.isEmpty   || p.primaryType == typeFilter)
-            && (vendorFilter.isEmpty || (p.vendor.isEmpty ? "Unknown" : p.vendor) == vendorFilter)
-        }.sorted { a, b in
-            let fa = client.vst.favoriteIDs.contains(a.id)
-            let fb = client.vst.favoriteIDs.contains(b.id)
-            if fa != fb { return fa }
-            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
-        }
-    }
     private var summary: String {
         let total  = client.vst.available.count
         let hidden = client.vst.disabledIDs.count
@@ -393,31 +419,43 @@ private struct PluginsSettingsPane: View {
     }
 }
 
-private struct PluginRow: View {
-    @Environment(DaemonClient.self) private var client
+/// A row's display state, computed once in `rebuild()` so the row itself never
+/// touches the (array-backed) disabled/favorite lists during layout.
+private struct PluginRowModel: Identifiable, Equatable {
     let plugin: VSTPlugin
+    let available: Bool
+    let favorite: Bool
+    var id: String { plugin.id }
+}
+
+private struct PluginRow: View, Equatable {
+    @Environment(DaemonClient.self) private var client
+    let model: PluginRowModel
+
+    // Only the baked-in model drives appearance, so identical models can skip
+    // re-rendering when the list rebuilds after an unrelated change.
+    static func == (a: PluginRow, b: PluginRow) -> Bool { a.model == b.model }
 
     var body: some View {
-        let available = !client.vst.disabledIDs.contains(plugin.id)
-        let favorite  = client.vst.favoriteIDs.contains(plugin.id)
+        let plugin = model.plugin
         HStack(spacing: 12) {
             Toggle("", isOn: Binding(
-                get: { available },
+                get: { model.available },
                 set: { client.setPluginAvailable(id: plugin.id, available: $0) }))
                 .labelsHidden()
                 .disabled(plugin.offline)
             Button {
-                client.setPluginFavorite(id: plugin.id, favorite: !favorite)
+                client.setPluginFavorite(id: plugin.id, favorite: !model.favorite)
             } label: {
-                Image(systemName: favorite ? "star.fill" : "star")
-                    .foregroundStyle(favorite ? .yellow : .secondary)
+                Image(systemName: model.favorite ? "star.fill" : "star")
+                    .foregroundStyle(model.favorite ? .yellow : .secondary)
             }
             .buttonStyle(.plain)
             .disabled(plugin.offline)
-            .help(favorite ? "Unstar" : "Star — shown first in the insert picker")
+            .help(model.favorite ? "Unstar" : "Star — shown first in the insert picker")
             VStack(alignment: .leading, spacing: 2) {
                 Text(plugin.name)
-                    .foregroundStyle(plugin.offline ? .secondary : (available ? .primary : .secondary))
+                    .foregroundStyle(plugin.offline ? .secondary : (model.available ? .primary : .secondary))
                 Text(plugin.vendor.isEmpty ? "Unknown" : plugin.vendor)
                     .font(.caption)
                     .foregroundStyle(.tertiary)
@@ -432,7 +470,7 @@ private struct PluginRow: View {
         }
         .padding(.horizontal, 14)
         .frame(minHeight: 40)
-        .opacity(plugin.offline ? 0.7 : (available ? 1 : 0.55))
+        .opacity(plugin.offline ? 0.7 : (model.available ? 1 : 0.55))
     }
 }
 

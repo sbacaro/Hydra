@@ -2,6 +2,36 @@
 
 All notable changes to Hydra are documented here.
 
+## [1.0.5] — 2026-06-26
+
+### Performance
+- **Smooth plug-in list.** Settings ▸ Plugins stuttered when scrolling a large
+  library fast. The list was re-filtering and re-sorting the whole library on every
+  layout pass (and once more per row), with linear lookups for each plug-in's
+  enabled/favorite state — O(n²). The filtered list is now computed once and cached,
+  rebuilt only when a filter, the search or the library actually changes, with
+  set-based lookups; rows scroll smoothly regardless of how many plug-ins you have.
+
+### Refinements
+- **Tidier notifications.** Toasts no longer pile up and cover the inspector. Repeats
+  of the same message now coalesce into one with a count ("×3") and reset their timer
+  instead of stacking; at most three show at once; they sit in the lower-left, out of
+  the way of the channel strip and Connect button; warnings linger a little longer
+  than routine status; and a click dismisses one. The full history still lives behind
+  the bell.
+- **Feedback loops are explained where you act.** Trying to make a patch that would
+  howl now refuses it *inline* at the Connect button — the button tints to a warning,
+  gives a small shake and shows the reason — instead of throwing a toast after the
+  fact. The check runs in the app before anything is sent, so the patch is never even
+  attempted.
+- **Settings & About stay in front.** Both windows now float above the main Hydra
+  window, so they no longer get buried behind it while you're using them.
+- **Calmer sidebar icons.** The bridge and device glyphs were tinted bright blue and
+  green; since almost everything listed is "present", the colour was decorative and
+  inconsistent. They're now monochrome (like Audio MIDI Setup), with state carried by
+  the bold name, the toggle and the tooltip — quieter and more consistent across the
+  Devices, Apps and Network tabs.
+
 ## [1.0.4] — 2026-06-26
 
 ### Fixes

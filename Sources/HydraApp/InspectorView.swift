@@ -299,6 +299,10 @@ private struct ChannelStrip: View {
     let clearSelection: () -> Void
 
     @State private var pickerSlotPresented = false
+    // Inline feedback-loop notice: shown at the Connect button when the patch the
+    // user is about to make would howl, instead of a floating toast after the fact.
+    @State private var feedbackNotice = false
+    @State private var shake = 0
 
     private var sourceBase: Int { selection.source.channel & ~1 }
     private var isStereoLinked: Bool {
@@ -480,20 +484,42 @@ private struct ChannelStrip: View {
                     .controlSize(.regular)
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("No connection at this cross-point yet.")
-                            .font(.callout)
-                            .foregroundStyle(.tertiary)
+                        if feedbackNotice {
+                            // Inline, at the point of action — the reason the patch
+                            // was refused, instead of a floating toast after the fact.
+                            Label("This patch would feed back on itself and is blocked.",
+                                  systemImage: "exclamationmark.triangle.fill")
+                                .font(.callout)
+                                .foregroundStyle(Theme.warning)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .transition(.opacity)
+                        } else {
+                            Text("No connection at this cross-point yet.")
+                                .font(.callout)
+                                .foregroundStyle(.tertiary)
+                        }
                         Button {
-                            client.connectCell(source: selection.source,
-                                               destination: selection.destination)
+                            if client.cellWouldFeedback(source: selection.source,
+                                                        destination: selection.destination) {
+                                withAnimation(.easeOut(duration: 0.2)) { feedbackNotice = true }
+                                withAnimation(.default) { shake += 1 }
+                            } else {
+                                feedbackNotice = false
+                                client.connectCell(source: selection.source,
+                                                   destination: selection.destination)
+                            }
                         } label: {
                             Label("Connect", systemImage: "cable.connector")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.regular)
+                        .tint(feedbackNotice ? Theme.warning : .accentColor)
+                        .modifier(ShakeEffect(animatableData: CGFloat(shake)))
                         .help("Patch \(selection.source.label) → \(selection.destination.label)\(selection.source.isStereo || selection.destination.isStereo ? " (stereo)" : "").")
                     }
+                    // Clear the notice when the user moves to a different cross-point.
+                    .onChange(of: selection) { _, _ in feedbackNotice = false }
                 }
             }
         }
@@ -765,5 +791,21 @@ private struct CellGainSlider: View {
             client.setCellGain(source: src, destination: dst,
                                gain: Gain.linear(fromDecibels: Float(db)))
         }
+    }
+}
+
+// MARK: - Shake effect
+
+/// A brief horizontal nudge used to draw the eye to a refused action (the Connect
+/// button when a patch would feed back). Driven by an incrementing counter so each
+/// press replays the shake.
+private struct ShakeEffect: GeometryEffect {
+    var animatableData: CGFloat
+    var amount: CGFloat = 5
+    var shakesPerUnit: CGFloat = 3
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        let dx = amount * sin(animatableData * .pi * shakesPerUnit)
+        return ProjectionTransform(CGAffineTransform(translationX: dx, y: 0))
     }
 }
