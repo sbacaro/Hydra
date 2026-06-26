@@ -217,9 +217,19 @@ final class Updater: ObservableObject {
     /// Runs `installer` as root via the system's authorization dialog. Throws
     /// `.cancelled` if the user dismisses the password prompt.
     private func install(pkgAt url: URL) throws {
-        let path = url.path.replacingOccurrences(of: "\"", with: "\\\"")
-        let shell = "/usr/sbin/installer -pkg \"\(path)\" -target /"
-        let source = "do shell script \"\(shell)\" with administrator privileges"
+        // The pkg path is wrapped in double quotes for the shell. That whole
+        // command is then embedded inside an AppleScript string literal, so every
+        // backslash and double quote in it — including the structural quotes we
+        // just added around the path — must be escaped for AppleScript. Escaping
+        // only the path (and not the surrounding quotes) was the bug that aborted
+        // every install with AppleScript error -2740, "an identifier can't go
+        // after this number": the unescaped quote closed the string early and the
+        // temp-dir path (e.g. /var/folders/…/00000gn/…) was parsed as code.
+        let shell = "/usr/sbin/installer -pkg \"\(url.path)\" -target /"
+        let escaped = shell
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let source = "do shell script \"\(escaped)\" with administrator privileges"
 
         var errorInfo: NSDictionary?
         guard let script = NSAppleScript(source: source) else {

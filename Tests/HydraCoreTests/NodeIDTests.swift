@@ -103,6 +103,7 @@ struct NodeIDTests {
 
     @Test func versionStringFormat() {
         #expect(!Hydra.version.isEmpty)
-        #expect(Hydra.versionString == "\(Hydra.version) \(Hydra.stage)")
+        let expected = Hydra.stage.isEmpty ? Hydra.version : "\(Hydra.version) \(Hydra.stage)"
+        #expect(Hydra.versionString == expected)
     }
 }

@@ -2,6 +2,20 @@
 
 All notable changes to Hydra are documented here.
 
+## [1.0.4] — 2026-06-26
+
+### Fixes
+- **Auto-update now installs.** Every build through 1.0.3 aborted the install step
+  with *"Update failed — an identifier can't go after this number."* The installer
+  command was embedded in an AppleScript string without escaping the quotes around
+  the package path, so the script broke apart and the temp-folder path was parsed
+  as code (AppleScript error -2740). The whole command is now properly escaped, so
+  the password prompt appears and the update installs and relaunches as intended.
+
+> Note: because the bug lived in the updater itself, upgrading **to** 1.0.4 must be
+> done once by hand (download the installer from the Releases page and run it).
+> Automatic updates work normally from 1.0.4 onward.
+
 ## [1.0.3] — 2026-06-25
 
 ### Polish & fixes
