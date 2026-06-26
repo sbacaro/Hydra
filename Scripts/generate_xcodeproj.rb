@@ -24,8 +24,8 @@ require 'xcodeproj'
 ROOT       = File.expand_path('..', __dir__)
 PROJ_PATH  = File.join(ROOT, 'Hydra.xcodeproj')
 DEPLOY     = '26.0'
-MARKETING  = '1.0.5'
-BUILD_NUM  = '1.0.5'
+MARKETING  = '1.0.6'
+BUILD_NUM  = '1.0.6'
 SRC_EXT    = %w[.swift .c .m .mm .cpp .cc].freeze
 
 project = Xcodeproj::Project.new(PROJ_PATH)

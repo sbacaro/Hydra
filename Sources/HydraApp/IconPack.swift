@@ -1,15 +1,19 @@
 // Hydra Audio — GPL-3.0
-// IconPack — the SINGLE source of the Hydra brand mark.
+// IconPack — the single source of the Hydra brand mark *inside the app*.
 //
-// Everything that shows the logo comes from here:
-//   • the app icon and the plugin-host icon are rasterised PNGs in their asset
-//     catalogs (Media.xcassets / hydra-plugin-host Assets.xcassets), generated
-//     from this exact waveform + gradient;
-//   • every in-app appearance uses the `BrandMark` view below (Welcome, About,
-//     the menu-bar panel, the sidebar header, the plugin picker).
+// Two consumers, one design:
+//   • LIVE (this file): every in-app appearance is drawn by the `BrandMark` view
+//     and the menu-bar glyph below (Welcome, About, the menu-bar panel, the
+//     sidebar header, the plugin picker) — vector, so it scales and tints cleanly.
+//   • RASTER (Scripts/generate_icons.py): all icon *files* — the app icon, the
+//     plugin-host icon, the audio-driver iconset + Hydra.icns, and the website
+//     icons — are generated from one script that defines the SAME waveform +
+//     gradient. That script is the single source for everything shipped as a file.
 //
-// To restyle the logo, change it here (and re-run the icon generator for the
-// rasterised app/host icons) — there is no second definition anywhere.
+// Both encode the identical mark. If you restyle the logo, change it in BOTH
+// places (the geometry constants here and in generate_icons.py) and re-run
+//   python3 Scripts/generate_icons.py
+// so the live mark and every rasterised icon stay in step.
 
 import SwiftUI
 import AppKit

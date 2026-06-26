@@ -49,9 +49,10 @@ extern "C" {
 
 /// Control command kinds (daemon → host).
 enum {
-    HYDRA_CMD_NONE        = 0,
-    HYDRA_CMD_OPEN_EDITOR = 1,   // open plugin `instance`'s editor window
-    HYDRA_CMD_SET_PARAM   = 2,   // set `paramId` = `value` on plugin `instance`
+    HYDRA_CMD_NONE         = 0,
+    HYDRA_CMD_OPEN_EDITOR  = 1,   // open plugin `instance`'s editor window
+    HYDRA_CMD_SET_PARAM    = 2,   // set `paramId` = `value` on plugin `instance`
+    HYDRA_CMD_CLOSE_EDITOR = 3,   // close plugin `instance`'s editor window
 };
 
 /// One control command. `instance` indexes the chain (0-based, in load order).

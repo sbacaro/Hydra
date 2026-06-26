@@ -86,7 +86,7 @@ func handleWSMessage(_ message: WSMessage, from connection: NWConnection) {
         stripManager.setStrip(strip)
         // onChange broadcasts the refreshed strips.
     case .openPluginEditor(let payload):
-        stripManager.openEditor(stripID: payload.stripID, index: payload.index)
+        stripManager.openEditor(stripID: payload.stripID, index: payload.index, pinned: payload.pinned)
     case .setPluginAvailable(let payload):
         stripManager.setPluginAvailable(id: payload.id, available: payload.available)
         // onChange broadcasts the refreshed plugin list.

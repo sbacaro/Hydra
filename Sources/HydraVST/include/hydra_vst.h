@@ -52,6 +52,11 @@ bool hydra_vst_has_editor(void *instance);
 /// through a lock-free queue.
 bool hydra_vst_open_editor(void *instance, const char *title);
 
+/// Closes the plugin's editor window if open (no-op otherwise). Safe to call on
+/// any thread (it hops to the main thread internally). Used to enforce the
+/// single-editor-window policy when another editor is opened.
+void hydra_vst_close_editor(void *instance);
+
 /// Sets a normalised parameter (0..1) from outside the GUI — e.g. the daemon,
 /// over the out-of-process plugin-host command channel. Call on the main thread;
 /// the change reaches the audio thread via the same lock-free ring as GUI edits,

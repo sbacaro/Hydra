@@ -73,6 +73,12 @@ private struct BridgeInspector: View {
     @Environment(DaemonClient.self) private var client
     let bridge: BridgeInfo
 
+    // Local mirror of the grid role. A `.segmented` Picker bound directly to a
+    // get/set closure over external (@Observable) state doesn't reliably move its
+    // highlight when the value changes through the binding's own side effect — the
+    // control looks stuck. Driving it from @State and syncing explicitly fixes it.
+    @State private var role: BridgeRole = .both
+
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             // Title block.
@@ -102,15 +108,18 @@ private struct BridgeInspector: View {
                 Text("Direction in grid")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Picker("", selection: Binding(
-                    get: { bridge.role },
-                    set: { client.setBridgeRole(bridge.id, role: $0) })) {
+                Picker("", selection: $role) {
                     Text("Input").tag(BridgeRole.input)
                     Text("Output").tag(BridgeRole.output)
                     Text("Both").tag(BridgeRole.both)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                // User moved the control → push to the engine (skip the echo when
+                // we're only syncing the mirror from an external change).
+                .onChange(of: role) { _, newRole in
+                    if newRole != bridge.role { client.setBridgeRole(bridge.id, role: newRole) }
+                }
             }
 
             // Network output — grouped inset list (System Settings style).
@@ -144,6 +153,13 @@ private struct BridgeInspector: View {
 
             Spacer(minLength: 0)
         }
+        // Keep the mirror in step with the engine: on first show, when the role
+        // changes elsewhere, and when the inspector retargets a different bridge.
+        .onAppear { role = bridge.role }
+        .onChange(of: bridge.role) { _, newRole in
+            if newRole != role { role = newRole }
+        }
+        .onChange(of: bridge.id) { _, _ in role = bridge.role }
     }
 }
 
@@ -229,7 +245,8 @@ private struct InsertsSection: View {
             ForEach(Array(strip.inserts.enumerated()), id: \.offset) { index, plugin in
                 HStack(spacing: 6) {
                     Button {
-                        client.openPluginEditor(stripID: strip.id, index: index)
+                        client.openPluginEditor(stripID: strip.id, index: index,
+                                                pinned: NSEvent.modifierFlags.contains(.shift))
                     } label: {
                         Text(plugin.name)
                             .font(.callout.weight(.semibold))
@@ -392,7 +409,8 @@ private struct ChannelStrip: View {
                 ForEach(Array(strip.inserts.enumerated()), id: \.offset) { index, plugin in
                     HStack(spacing: 6) {
                         Button {
-                            client.openPluginEditor(stripID: strip.id, index: index)
+                            client.openPluginEditor(stripID: strip.id, index: index,
+                                                pinned: NSEvent.modifierFlags.contains(.shift))
                         } label: {
                             Text(plugin.name)
                                 .font(.callout.weight(.semibold))

@@ -125,6 +125,11 @@ final class RemotePluginHost: @unchecked Sendable {
         sendCommand(UInt32(HYDRA_CMD_OPEN_EDITOR), instance: index)
     }
 
+    /// Ask the host to close plugin `index`'s editor window (single-window policy).
+    func closeEditor(index: Int) {
+        sendCommand(UInt32(HYDRA_CMD_CLOSE_EDITOR), instance: index)
+    }
+
     /// Set a normalised parameter (0..1) on plugin `index` of the remote chain.
     func setParameter(index: Int, paramId: UInt32, value: Float) {
         sendCommand(UInt32(HYDRA_CMD_SET_PARAM), instance: index, paramId: paramId, value: value)

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import HydraCore
 
 /// In/out peak levels for one channel strip (linear amplitude).
@@ -230,7 +231,8 @@ struct InsertRowView: View {
             
             HStack(spacing: 6) {
                 Button(action: {
-                    client.openPluginEditor(stripID: strip.id, index: index)
+                    client.openPluginEditor(stripID: strip.id, index: index,
+                                            pinned: NSEvent.modifierFlags.contains(.shift))
                 }) {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 10))

@@ -490,6 +490,18 @@ static void hydra_vst_teardown_editor(Instance *instance)
     }
 }
 
+// Close just the editor window (keep the plugin instance loaded and processing).
+// Tearing down the view drops the activation-policy/Dock-icon refcount via the
+// window's close notification, exactly like the user clicking the close button.
+void hydra_vst_close_editor(void *opaque)
+{
+    auto instance = static_cast<Instance *>(opaque);
+    if (!instance || !instance->window) {
+        return;
+    }
+    hydra_vst_teardown_editor(instance);
+}
+
 void hydra_vst_destroy_instance(void *opaque)
 {
     auto instance = static_cast<Instance *>(opaque);

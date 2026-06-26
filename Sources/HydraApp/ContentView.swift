@@ -25,6 +25,9 @@ struct ContentView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showInspector = true
     @State private var showEvents    = false
+    // When the user closes the event popover, new events stop auto-opening it
+    // (silenced) until they open the bell again. See the bell `onChange` handlers.
+    @State private var eventsSilenced = false
     @State private var showPalette   = false
     @State private var showWelcome   = false
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
@@ -90,7 +93,6 @@ struct ContentView: View {
                 updateBanner(version: version)
             }
         }
-        .overlay(alignment: .bottomLeading) { toastsOverlay }
         .overlay {
             if showPalette { paletteOverlay }
         }
@@ -103,6 +105,15 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut(duration: 0.25), value: client.connectionState)
+        // Notifications: a new live event pops the event bell open to show it,
+        // unless the user has silenced it by closing the popover. Closing silences;
+        // opening the bell (or its auto-opening) clears the silence again.
+        .onChange(of: client.liveEventTick) {
+            if !eventsSilenced { showEvents = true }
+        }
+        .onChange(of: showEvents) { _, open in
+            eventsSilenced = !open
+        }
         // ⌘K from anywhere in the window.
         .background(
             Button("") { showPalette.toggle() }
@@ -278,45 +289,6 @@ struct ContentView: View {
         }
         .padding(16)
         .frame(width: 320)
-    }
-
-    // MARK: - Toast notifications
-
-    private var toastsOverlay: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(client.toasts) { item in
-                HStack(spacing: 8) {
-                    Image(systemName: iconName(for: item.kind))
-                        .font(.system(size: 13))
-                        .foregroundStyle(color(for: item.kind))
-                    Text(item.message)
-                        .font(.callout)
-                        .lineLimit(2)
-                    if item.count > 1 {
-                        Text("\(item.count)")
-                            .font(.caption2.weight(.semibold))
-                            .monospacedDigit()
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(.quaternary, in: Capsule())
-                            .help("Repeated \(item.count) times")
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .frame(maxWidth: 360, alignment: .leading)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(.separator, lineWidth: 0.5))
-                .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
-                .contentShape(RoundedRectangle(cornerRadius: 10))
-                .onTapGesture { client.dismissToast(item.id) }
-                .help("Click to dismiss")
-                .transition(.move(edge: .leading).combined(with: .opacity))
-            }
-        }
-        .padding(.leading, 14)
-        .padding(.bottom, 14)
-        .animation(.easeOut(duration: 0.2), value: client.toasts)
     }
 
     // MARK: - ⌘K palette

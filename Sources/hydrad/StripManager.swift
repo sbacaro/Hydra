@@ -138,6 +138,14 @@ final class ChainTap: EngineTap {
         return true
     }
 
+    /// Out-of-process counterpart of the close path. Returns true when handled
+    /// remotely (so the caller skips the in-process close).
+    func closeEditorRemotely(index: Int) -> Bool {
+        guard let remoteHost else { return false }
+        remoteHost.closeEditor(index: index)
+        return true
+    }
+
     deinit {
         // Out-of-process chain: tear down the child + shared memory.
         remoteHost?.shutdown()
@@ -254,6 +262,11 @@ final class StripManager: @unchecked Sendable {
     private var customRoot = ""
     private var strips: [String: StripInfo] = [:]   // key → strip
     private var active: [UUID: ChainTap] = [:]      // strip id → tap
+    /// The one non-pinned ("transient") editor currently open. Opening another
+    /// editor without Shift closes this one first, so only a single editor window
+    /// is up at a time; Shift-opened windows are pinned (left out of this slot) and
+    /// stay until closed by hand. `queue`-only.
+    private var transientEditor: (stripID: UUID, index: Int)?
     /// User plugin-management choices (Settings → Plugins): hidden (opt-out) and
     /// starred plugin IDs. Persisted separately from the scan cache.
     private var disabledIDs: Set<String> = []
@@ -455,16 +468,37 @@ final class StripManager: @unchecked Sendable {
     /// Opens the editor window of a loaded insert (in-process, or routed to the
     /// out-of-process host when the chain runs remotely).
     enum EditorTarget { case remote, local(UnsafeMutableRawPointer, String), none }
-    func openEditor(stripID: UUID, index: Int) {
+    /// Open an insert's editor. By default this is the single "transient" window:
+    /// the previously-open transient editor (wherever it is) is closed first, so at
+    /// most one editor is up. With `pinned` (Shift-open) the window is left to stand
+    /// on its own — it isn't closed by the next open and stays until closed by hand.
+    func openEditor(stripID: UUID, index: Int, pinned: Bool) {
         let target: EditorTarget = queue.sync {
+            // Single-window policy: a plain open first dismisses the current
+            // transient editor (unless it's this very one).
+            if !pinned, let prev = transientEditor,
+               !(prev.stripID == stripID && prev.index == index) {
+                closeEditorLocked(stripID: prev.stripID, index: prev.index)
+            }
+
             guard let tap = active[stripID] else { return .none }
-            // Remote chain: the editor lives in the host process.
-            if tap.openEditorRemotely(index: index) { return .remote }
-            guard let handle = tap.instanceHandle(at: index) else { return .none }
-            let title = tap.info.plugins.indices.contains(index)
-                ? "\(tap.info.plugins[index].name) — \(tap.info.name)"
-                : tap.info.name
-            return .local(handle, title)
+            let resolved: EditorTarget
+            if tap.openEditorRemotely(index: index) {
+                resolved = .remote                  // editor lives in the host process
+            } else if let handle = tap.instanceHandle(at: index) {
+                let title = tap.info.plugins.indices.contains(index)
+                    ? "\(tap.info.plugins[index].name) — \(tap.info.name)"
+                    : tap.info.name
+                resolved = .local(handle, title)
+            } else {
+                resolved = .none
+            }
+
+            // A plain open becomes the new transient; a pinned open is independent.
+            if case .none = resolved {} else if !pinned {
+                transientEditor = (stripID, index)
+            }
+            return resolved
         }
         switch target {
         case .remote:
@@ -480,6 +514,19 @@ final class StripManager: @unchecked Sendable {
                     log("VST editor: plugin did not provide a view")
                 }
             }
+        }
+    }
+
+    /// Close one insert's editor window wherever it lives (remote host or
+    /// in-process). `queue`-only; the in-process close hops to the main thread.
+    private func closeEditorLocked(stripID: UUID, index: Int) {
+        guard let tap = active[stripID] else { return }
+        if tap.closeEditorRemotely(index: index) { return }
+        guard let handle = tap.instanceHandle(at: index) else { return }
+        let handleAddr = UInt(bitPattern: handle)
+        DispatchQueue.main.async {
+            guard let h = UnsafeMutableRawPointer(bitPattern: handleAddr) else { return }
+            hydra_vst_close_editor(h)
         }
     }
 

@@ -2,6 +2,33 @@
 
 All notable changes to Hydra are documented here.
 
+## [1.0.6] — 2026-06-26
+
+### Plug-ins
+- **One plug-in editor at a time.** Opening a plug-in's editor now closes the
+  previous one, so windows don't pile up. Hold **⇧ Shift** while opening to pin a
+  window — it stays put until you close it by hand, so you can keep a few side by
+  side on purpose. (Works across crash-isolated hosts: the engine coordinates the
+  windows wherever each plug-in is hosted.)
+
+### Fixes
+- **Soundcard device icon updated.** The Hydra audio devices still showed the old
+  indigo waveform in Audio MIDI Setup and the sound menu — only the app icon had been
+  switched to the Space Black mark. The driver's `Hydra.icns` (and its source iconset)
+  are now regenerated from the new logo, so the devices match everywhere. (macOS caches
+  device icons aggressively; a reboot may be needed for the new one to appear.)
+- **Bridge direction control works again.** The Input / Output / Both segmented
+  control in a bridge's inspector could look stuck — the highlight wouldn't move when
+  tapped. It was bound straight to external state through a get/set closure, which
+  the segmented control doesn't track reliably on macOS 26; it's now driven by local
+  state and synced explicitly, so it responds immediately and the grid follows.
+
+### Refinements
+- **Notifications live in the bell now.** The floating toasts are gone — they never
+  felt part of the app. Instead, a new event opens the event-bell popover (top-right)
+  to show it, in the same place the full history already lived. Close the popover and
+  you've silenced it: new events stop popping it open until you click the bell again.
+
 ## [1.0.5] — 2026-06-26
 
 ### Performance

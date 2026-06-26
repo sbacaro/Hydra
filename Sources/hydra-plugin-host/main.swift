@@ -224,6 +224,8 @@ final class PluginHost: @unchecked Sendable {
             case UInt32(HYDRA_CMD_OPEN_EDITOR):
                 let title = titles.indices.contains(idx) ? titles[idx] : "Plugin \(idx + 1)"
                 _ = title.withCString { hydra_vst_open_editor(inst, $0) }
+            case UInt32(HYDRA_CMD_CLOSE_EDITOR):
+                hydra_vst_close_editor(inst)
             case UInt32(HYDRA_CMD_SET_PARAM):
                 hydra_vst_set_parameter(inst, cmd.paramId, Double(cmd.value))
             default:

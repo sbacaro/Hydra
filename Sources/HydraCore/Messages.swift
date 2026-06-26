@@ -381,9 +381,21 @@ public struct StripsPayload: Codable, Sendable, Equatable {
 public struct OpenEditorPayload: Codable, Sendable, Equatable {
     public var stripID: UUID
     public var index: Int
-    public init(stripID: UUID, index: Int) {
+    /// Shift-open: keep this editor window standing on its own (don't close it
+    /// when another editor opens, and don't let it be the auto-closed "transient"
+    /// one). Defaults to false so an older client decodes as a normal open.
+    public var pinned: Bool
+    public init(stripID: UUID, index: Int, pinned: Bool = false) {
         self.stripID = stripID
         self.index = index
+        self.pinned = pinned
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        stripID = try c.decode(UUID.self, forKey: .stripID)
+        index = try c.decode(Int.self, forKey: .index)
+        pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
     }
 }
 
