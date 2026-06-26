@@ -84,12 +84,12 @@ jobs:
       # Smoke-build the daemon too. The HydraCore test bundle only links
       # HydraCore, so a compile error in hydrad (Core Audio / RT code) would
       # otherwise slip past CI. This builds the audio engine target as well.
-      - name: Build hydrad (unsigned)
+      - name: Build HydraDaemon (unsigned)
         run: |
           set -o pipefail
           xcodebuild build \
             -project Hydra.xcodeproj \
-            -scheme hydrad \
+            -scheme HydraDaemon \
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO
 
@@ -172,12 +172,12 @@ jobs:
       # Compile the daemon with ASan instrumentation, so a build break under
       # sanitizer settings (RT code, unsafe pointers) is caught even before a
       # runtime test exercises it.
-      - name: Build hydrad — AddressSanitizer
+      - name: Build HydraDaemon — AddressSanitizer
         run: |
           set -o pipefail
           xcodebuild build \
             -project Hydra.xcodeproj \
-            -scheme hydrad \
+            -scheme HydraDaemon \
             -destination 'platform=macOS' \
             -enableAddressSanitizer YES \
             CODE_SIGNING_ALLOWED=NO
