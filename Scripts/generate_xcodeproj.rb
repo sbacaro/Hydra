@@ -14,6 +14,7 @@
 #   HydraVST            framework (C++/ObjC++) — VST3 hosting shim (Steinberg SDK)
 #   HydraNDIShim        framework (C)       — dlopen() facade for the NDI runtime
 #   HydraModuleABI      framework (C)       — generic module plugin ABI
+#   HydraSurface        framework (Swift)   — control-surface bridge (HiQnet/HUI)
 #   HydraDaemon         framework (Swift)   — audio engine, runs in-process in the app
 #   HydraApp            app (Swift)         — SwiftUI UI + the in-process engine
 #   HydraVirtualSoundcard  .driver bundle (C) — 512-wire AudioServerPlugIn backplane
@@ -243,6 +244,14 @@ fetch_target.build_configurations.each do |c|
 end
 vst.add_dependency(fetch_target)
 
+# Control-surface bridge (HiQnet ↔ Mackie HUI) for Soundcraft Si consoles. Pure
+# Swift codecs + CoreMIDI/Network I/O; NO Hydra dependency (it logs via an onLog
+# hook). Consumed by HydraDaemon (SurfaceManager.swift) and embedded by the app.
+surface = project.new_target(:framework, 'HydraSurface', :osx, DEPLOY, nil, :swift)
+sync_dir(project, surface, 'Sources/HydraSurface')
+surface.add_system_framework(%w[CoreMIDI Network])
+common!(surface, 'audio.hydra.surface', 'DEFINES_MODULE' => 'YES')
+
 # ---------------------------------------------------------------------------
 # executables (.app)
 # ---------------------------------------------------------------------------
@@ -261,7 +270,7 @@ common!(daemon, 'audio.hydra.daemon', {
   'LD_RUNPATH_SEARCH_PATHS'=> "$(inherited) #{RPATH}",
   'PRODUCT_NAME'           => 'HydraDaemon'
 })
-[core, rt, vst, ndishim, moduleabi, pluginhostabi].each do |fw|
+[core, rt, vst, ndishim, moduleabi, pluginhostabi, surface].each do |fw|
   daemon.add_dependency(fw)
   daemon.frameworks_build_phase.add_file_reference(fw.product_reference, true)
 end
@@ -315,7 +324,7 @@ common!(app, 'audio.hydra.app', {
 })
 # The app now LINKS + EMBEDS the audio engine (HydraDaemon) and every framework it
 # uses, since they're all loaded by this single process.
-link_and_embed(app, [core, daemon, rt, vst, ndishim, moduleabi, pluginhostabi])
+link_and_embed(app, [core, daemon, rt, vst, ndishim, moduleabi, pluginhostabi, surface])
 
 # In-app auto-update is implemented in Sources/HydraApp/Updater.swift using only
 # system frameworks (URLSession + CryptoKit + AppKit) — no embedded framework.
@@ -476,6 +485,19 @@ common!(rtTests, 'audio.hydra.rt.tests', {
   'CODE_SIGN_IDENTITY'      => '-'
 })
 
+# Control-surface codec tests — HiQnet/HUI round-trips (Swift Testing). They
+# `@testable import HydraSurface`, so the framework is a dependency here.
+surfaceTests = project.new_target(:unit_test_bundle, 'HydraSurfaceTests', :osx, DEPLOY, nil, :swift)
+sync_dir(project, surfaceTests, 'Tests/HydraSurfaceTests')
+surfaceTests.add_dependency(surface)
+surfaceTests.frameworks_build_phase.add_file_reference(surface.product_reference, true)
+common!(surfaceTests, 'audio.hydra.surface.tests', {
+  'LD_RUNPATH_SEARCH_PATHS' => '$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks',
+  'GENERATE_INFOPLIST_FILE' => 'YES',
+  'CODE_SIGN_STYLE'         => 'Manual',
+  'CODE_SIGN_IDENTITY'      => '-'
+})
+
 # The xcodeproj gem seeds every new target with ENABLE_MODULE_VERIFIER = YES,
 # which OVERRIDES the project-level NO and makes the clang module verifier fail on
 # the VST3 SDK's C++ headers (Command VerifyModule failed). Force it off on every
@@ -515,6 +537,7 @@ shared_scheme(project, 'HydraApp', app, tests)
 shared_scheme(project, 'HydraDaemon', daemon, tests)
 shared_scheme(project, 'HydraCore', core, tests)
 shared_scheme(project, 'HydraRTTests', core, rtTests)
+shared_scheme(project, 'HydraSurfaceTests', surface, surfaceTests)
 shared_scheme(project, 'HydraVirtualSoundcard.driver', driver)
 
 puts "Wrote #{PROJ_PATH}"
