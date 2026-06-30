@@ -4,17 +4,18 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Hydra — An audio patch bay for your Mac</title>
-<meta name="description" content="Hydra is a virtual audio patch bay for macOS: eight selectable audio bridges, per-app capture, VST3, AES67/NDI and OSC — all in one visual matrix. Free and open source." />
+<meta name="description" content="Hydra is a virtual audio patch bay for macOS: eight selectable audio bridges, per-app capture, capture flows, VST3, AES67/NDI and OSC — all in one visual matrix. Free and open source." />
 <link rel="icon" href="assets/hydra-icon-180.png" />
 <meta property="og:title" content="Hydra — An audio patch bay for your Mac" />
 <meta property="og:description" content="Route any source to any destination — apps, hardware, plug-ins and the network — in one visual matrix." />
 <meta property="og:image" content="assets/hydra-icon.png" />
 <style>
   :root{
-    --bg:#0b0b0d; --panel:#151517;
+    --bg:#0b0b0d; --panel:#151517; --panel-2:#1b1b1e;
     --ink:#f5f5f7; --ink-2:#a1a1a6; --ink-3:#6e6e73;
     --line:rgba(255,255,255,.10);
-    --accent:#2997ff;
+    --accent:#2997ff; --accent-soft:rgba(41,151,255,.5);
+    --live:#34c759; --live-soft:rgba(52,199,89,.5);
     --radius:20px;
     --maxw:1040px;
   }
@@ -56,27 +57,28 @@
   .hero p.sub{font-size:clamp(16px,2.4vw,20px);color:var(--ink-2);max-width:640px;margin:18px auto 0}
   .hero .cta{margin-top:32px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
   .hero .meta{margin-top:18px;font-size:13px;color:var(--ink-3)}
-  .hero-shot{max-width:1180px;margin:64px auto 0;padding:0 24px}
-  .hero-shot img{width:100%;border-radius:14px;border:1px solid var(--line);
-    box-shadow:0 40px 90px rgba(0,0,0,.55)}
+  .hero-art{max-width:1080px;margin:60px auto 0;padding:0 24px}
+  .hero-art .frame{border-radius:16px;border:1px solid var(--line);overflow:hidden;
+    box-shadow:0 40px 90px rgba(0,0,0,.55);background:linear-gradient(180deg,#191a1d,#101013)}
+  .hero-art svg{width:100%;display:block}
 
   /* Feature sections */
   section.feature{padding:104px 24px;border-top:1px solid var(--line)}
   section.feature .wrap{display:grid;grid-template-columns:1fr 1fr;gap:54px;align-items:center}
   section.feature.alt .wrap{direction:rtl}
-  section.feature.alt .copy,section.feature.alt .art,section.feature.alt .shot{direction:ltr}
+  section.feature.alt .copy,section.feature.alt .art{direction:ltr}
   .eyebrow{font-size:13px;font-weight:600;letter-spacing:.02em;color:var(--accent);text-transform:uppercase;margin-bottom:14px}
+  .eyebrow.live{color:var(--live)}
   .copy h2{font-size:clamp(30px,4.6vw,44px);font-weight:700;letter-spacing:-.02em;line-height:1.08}
   .copy p{font-size:clamp(16px,2.2vw,19px);color:var(--ink-2);margin-top:16px;max-width:34em}
-  .shot img, .art{border-radius:var(--radius);border:1px solid var(--line);
-    box-shadow:0 24px 60px rgba(0,0,0,.4);overflow:hidden}
-  .shot img{width:100%}
-  .art{background:linear-gradient(180deg,#1a1a1d,#121214);aspect-ratio:4/3;display:flex;align-items:center;justify-content:center}
-  .art svg{width:100%;height:100%}
+  .art{border-radius:var(--radius);border:1px solid var(--line);
+    box-shadow:0 24px 60px rgba(0,0,0,.4);overflow:hidden;
+    background:linear-gradient(180deg,#1a1a1d,#121214);aspect-ratio:4/3;display:flex;align-items:center;justify-content:center}
+  .art svg{width:100%;height:100%;display:block}
   @media(max-width:760px){
     section.feature .wrap{grid-template-columns:1fr;gap:26px}
     section.feature.alt .wrap{direction:ltr}
-    .shot,.art{order:-1}
+    .art{order:-1}
   }
 
   /* Reveal */
@@ -131,8 +133,57 @@
     <a class="btn" href="#download">Download for macOS</a>
     <a class="btn ghost" href="https://github.com/sbacaro/Hydra-Soundcard">View on GitHub</a>
   </div>
-  <div class="meta">Version 1.0.7 · GPL‑3.0 · Requires macOS 26 (Tahoe)</div>
-  <div class="hero-shot reveal"><img src="assets/shot-hero.png" alt="The Hydra patch grid with connections and a channel strip"/></div>
+  <div class="meta">Version 1.0.8 · GPL‑3.0 · Requires macOS 26 (Tahoe)</div>
+
+  <div class="hero-art reveal">
+    <div class="frame">
+      <svg viewBox="0 0 960 420" role="img" aria-label="An abstract patch matrix routing sources to destinations">
+        <!-- column (source) headers -->
+        <g fill="#26262b">
+          <rect x="300" y="44" width="78" height="22" rx="7"/>
+          <rect x="410" y="44" width="78" height="22" rx="7"/>
+          <rect x="520" y="44" width="78" height="22" rx="7"/>
+          <rect x="630" y="44" width="78" height="22" rx="7"/>
+          <rect x="740" y="44" width="78" height="22" rx="7"/>
+        </g>
+        <g fill="#4a4a52">
+          <rect x="312" y="52" width="44" height="6" rx="3"/>
+          <rect x="422" y="52" width="44" height="6" rx="3"/>
+          <rect x="532" y="52" width="44" height="6" rx="3"/>
+          <rect x="642" y="52" width="44" height="6" rx="3"/>
+          <rect x="752" y="52" width="44" height="6" rx="3"/>
+        </g>
+        <!-- row (destination) headers -->
+        <g fill="#26262b">
+          <rect x="120" y="120" width="120" height="26" rx="8"/>
+          <rect x="120" y="178" width="120" height="26" rx="8"/>
+          <rect x="120" y="236" width="120" height="26" rx="8"/>
+          <rect x="120" y="294" width="120" height="26" rx="8"/>
+        </g>
+        <g fill="#4a4a52">
+          <rect x="134" y="130" width="64" height="6" rx="3"/>
+          <rect x="134" y="188" width="64" height="6" rx="3"/>
+          <rect x="134" y="246" width="64" height="6" rx="3"/>
+          <rect x="134" y="304" width="64" height="6" rx="3"/>
+        </g>
+        <!-- cross-point dots -->
+        <g fill="#34343b">
+          <circle cx="339" cy="133" r="5"/><circle cx="449" cy="133" r="5"/><circle cx="559" cy="133" r="5"/><circle cx="669" cy="133" r="5"/><circle cx="779" cy="133" r="5"/>
+          <circle cx="339" cy="191" r="5"/><circle cx="449" cy="191" r="5"/><circle cx="559" cy="191" r="5"/><circle cx="669" cy="191" r="5"/><circle cx="779" cy="191" r="5"/>
+          <circle cx="339" cy="249" r="5"/><circle cx="449" cy="249" r="5"/><circle cx="559" cy="249" r="5"/><circle cx="669" cy="249" r="5"/><circle cx="779" cy="249" r="5"/>
+          <circle cx="339" cy="307" r="5"/><circle cx="449" cy="307" r="5"/><circle cx="559" cy="307" r="5"/><circle cx="669" cy="307" r="5"/><circle cx="779" cy="307" r="5"/>
+        </g>
+        <!-- lit connections -->
+        <g fill="#2997ff">
+          <circle cx="449" cy="133" r="8"/>
+          <circle cx="669" cy="191" r="8"/>
+          <circle cx="339" cy="249" r="8"/>
+          <circle cx="779" cy="307" r="8"/>
+        </g>
+        <circle cx="559" cy="307" r="8" fill="#34c759"/>
+      </svg>
+    </div>
+  </div>
 </header>
 
 <main id="features">
@@ -145,7 +196,48 @@
         <h2>Eight bridges. Any app.</h2>
         <p>Eight fixed audio devices — from 2 to 128 channels — that any app can pick as its input or output, just like a real interface. Turn the ones you need on; leave the rest off.</p>
       </div>
-      <div class="shot reveal"><img src="assets/shot-bridges.png" alt="The Hydra Audio Bridge devices in the sidebar"/></div>
+      <div class="art reveal">
+        <svg viewBox="0 0 400 300" role="img" aria-label="A stack of audio bridge devices, some switched on">
+          <g>
+            <!-- 5 device rows -->
+            <g>
+              <rect x="56" y="44" width="288" height="36" rx="10" fill="#1d1d20" stroke="rgba(255,255,255,.12)"/>
+              <circle cx="80" cy="62" r="7" fill="#34343b"/>
+              <rect x="100" y="58" width="120" height="8" rx="4" fill="#55555d"/>
+              <rect x="296" y="52" width="34" height="20" rx="10" fill="#2997ff"/>
+              <circle cx="320" cy="62" r="7" fill="#fff"/>
+            </g>
+            <g>
+              <rect x="56" y="92" width="288" height="36" rx="10" fill="#1d1d20" stroke="rgba(255,255,255,.12)"/>
+              <circle cx="80" cy="110" r="7" fill="#34343b"/>
+              <rect x="100" y="106" width="100" height="8" rx="4" fill="#55555d"/>
+              <rect x="296" y="100" width="34" height="20" rx="10" fill="#2997ff"/>
+              <circle cx="320" cy="110" r="7" fill="#fff"/>
+            </g>
+            <g>
+              <rect x="56" y="140" width="288" height="36" rx="10" fill="#1d1d20" stroke="rgba(255,255,255,.12)"/>
+              <circle cx="80" cy="158" r="7" fill="#34343b"/>
+              <rect x="100" y="154" width="132" height="8" rx="4" fill="#55555d"/>
+              <rect x="296" y="148" width="34" height="20" rx="10" fill="#2c2c33"/>
+              <circle cx="310" cy="158" r="7" fill="#6e6e73"/>
+            </g>
+            <g>
+              <rect x="56" y="188" width="288" height="36" rx="10" fill="#1d1d20" stroke="rgba(255,255,255,.12)"/>
+              <circle cx="80" cy="206" r="7" fill="#34343b"/>
+              <rect x="100" y="202" width="96" height="8" rx="4" fill="#55555d"/>
+              <rect x="296" y="196" width="34" height="20" rx="10" fill="#2c2c33"/>
+              <circle cx="310" cy="206" r="7" fill="#6e6e73"/>
+            </g>
+            <g>
+              <rect x="56" y="236" width="288" height="36" rx="10" fill="#1d1d20" stroke="rgba(255,255,255,.12)"/>
+              <circle cx="80" cy="254" r="7" fill="#34343b"/>
+              <rect x="100" y="250" width="116" height="8" rx="4" fill="#55555d"/>
+              <rect x="296" y="244" width="34" height="20" rx="10" fill="#2c2c33"/>
+              <circle cx="310" cy="254" r="7" fill="#6e6e73"/>
+            </g>
+          </g>
+        </svg>
+      </div>
     </div>
   </section>
 
@@ -157,36 +249,146 @@
         <h2>Patch like a pro.</h2>
         <p>A Dante Controller–style matrix. Click a cross‑point to connect a transmitter to a receiver. Channel strips give you gain and VST3 inserts; a pin lights when audio is flowing.</p>
       </div>
-      <div class="shot reveal"><img src="assets/shot-grid.png" alt="The Hydra patch matrix with connections"/></div>
+      <div class="art reveal">
+        <svg viewBox="0 0 400 300" role="img" aria-label="A patch matrix with a few connected cross-points">
+          <!-- grid lines -->
+          <g stroke="rgba(255,255,255,.06)" stroke-width="1">
+            <line x1="70" y1="60" x2="70" y2="250"/><line x1="120" y1="60" x2="120" y2="250"/>
+            <line x1="170" y1="60" x2="170" y2="250"/><line x1="220" y1="60" x2="220" y2="250"/>
+            <line x1="270" y1="60" x2="270" y2="250"/><line x1="320" y1="60" x2="320" y2="250"/>
+            <line x1="70" y1="70" x2="320" y2="70"/><line x1="70" y1="115" x2="320" y2="115"/>
+            <line x1="70" y1="160" x2="320" y2="160"/><line x1="70" y1="205" x2="320" y2="205"/>
+            <line x1="70" y1="250" x2="320" y2="250"/>
+          </g>
+          <!-- dots -->
+          <g fill="#34343b">
+            <circle cx="70" cy="70" r="4"/><circle cx="120" cy="70" r="4"/><circle cx="170" cy="70" r="4"/><circle cx="220" cy="70" r="4"/><circle cx="270" cy="70" r="4"/><circle cx="320" cy="70" r="4"/>
+            <circle cx="70" cy="115" r="4"/><circle cx="120" cy="115" r="4"/><circle cx="170" cy="115" r="4"/><circle cx="220" cy="115" r="4"/><circle cx="270" cy="115" r="4"/><circle cx="320" cy="115" r="4"/>
+            <circle cx="70" cy="160" r="4"/><circle cx="120" cy="160" r="4"/><circle cx="170" cy="160" r="4"/><circle cx="220" cy="160" r="4"/><circle cx="270" cy="160" r="4"/><circle cx="320" cy="160" r="4"/>
+            <circle cx="70" cy="205" r="4"/><circle cx="120" cy="205" r="4"/><circle cx="170" cy="205" r="4"/><circle cx="220" cy="205" r="4"/><circle cx="270" cy="205" r="4"/><circle cx="320" cy="205" r="4"/>
+            <circle cx="70" cy="250" r="4"/><circle cx="120" cy="250" r="4"/><circle cx="170" cy="250" r="4"/><circle cx="220" cy="250" r="4"/><circle cx="270" cy="250" r="4"/><circle cx="320" cy="250" r="4"/>
+          </g>
+          <!-- lit cross-points -->
+          <g fill="#2997ff">
+            <circle cx="120" cy="70" r="8"/>
+            <circle cx="270" cy="115" r="8"/>
+            <circle cx="170" cy="205" r="8"/>
+            <circle cx="320" cy="250" r="8"/>
+          </g>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- Flux (NEW) -->
+  <section class="feature">
+    <div class="wrap">
+      <div class="copy reveal">
+        <div class="eyebrow live">Flux · Capture flows</div>
+        <h2>Capture and route, continuously.</h2>
+        <p>A new view, alongside Grid and List. A flow taps a device’s output — whatever any app is playing to it — and routes it into Hydra, without changing your system output. Each flow is a signal chain you edit in place: capture, then send wherever you want, with the same inserts and level as everywhere else.</p>
+      </div>
+      <div class="art reveal">
+        <svg viewBox="0 0 400 300" role="img" aria-label="A capture flow: a capture node routed to an output node">
+          <!-- capture card -->
+          <rect x="40" y="96" width="140" height="108" rx="14" fill="#16181a" stroke="rgba(52,199,89,.5)"/>
+          <rect x="40" y="104" width="4" height="92" rx="2" fill="#34c759"/>
+          <circle cx="72" cy="128" r="9" fill="none" stroke="#34c759" stroke-width="3"/>
+          <rect x="90" y="123" width="64" height="9" rx="4" fill="#55555d"/>
+          <g fill="#34c759">
+            <circle cx="72" cy="166" r="6"/><circle cx="96" cy="166" r="6"/>
+          </g>
+          <rect x="116" y="160" width="42" height="12" rx="6" fill="#26262b"/>
+          <!-- arrow -->
+          <g stroke="#6e6e73" stroke-width="3" fill="none">
+            <line x1="190" y1="150" x2="214" y2="150"/>
+          </g>
+          <path d="M214 150 l-9 -6 v12 z" fill="#6e6e73"/>
+          <!-- output card -->
+          <rect x="224" y="96" width="140" height="108" rx="14" fill="#16181a" stroke="rgba(41,151,255,.5)"/>
+          <rect x="224" y="104" width="4" height="92" rx="2" fill="#2997ff"/>
+          <circle cx="256" cy="128" r="9" fill="none" stroke="#2997ff" stroke-width="3"/>
+          <rect x="274" y="123" width="64" height="9" rx="4" fill="#55555d"/>
+          <!-- mini volume -->
+          <rect x="256" y="164" width="84" height="4" rx="2" fill="#2c2c33"/>
+          <rect x="256" y="164" width="52" height="4" rx="2" fill="#2997ff"/>
+          <circle cx="308" cy="166" r="7" fill="#fff"/>
+        </svg>
+      </div>
     </div>
   </section>
 
   <!-- App capture -->
-  <section class="feature">
+  <section class="feature alt">
     <div class="wrap">
       <div class="copy reveal">
         <div class="eyebrow">Per‑app capture</div>
         <h2>Capture any app.</h2>
         <p>Grab the sound of a single app with Core Audio process taps. It keeps playing through its normal output while Hydra gets a clean copy you can route, record or stream.</p>
       </div>
-      <div class="shot reveal"><img src="assets/shot-apps.png" alt="Capturing an app's audio in Hydra"/></div>
+      <div class="art reveal">
+        <svg viewBox="0 0 400 300" role="img" aria-label="An app's audio split into its normal output and a copy into Hydra">
+          <!-- app window -->
+          <rect x="58" y="104" width="104" height="92" rx="14" fill="#1d1d20" stroke="rgba(255,255,255,.12)"/>
+          <circle cx="78" cy="124" r="4" fill="#6e6e73"/><circle cx="92" cy="124" r="4" fill="#6e6e73"/><circle cx="106" cy="124" r="4" fill="#6e6e73"/>
+          <rect x="78" y="144" width="64" height="8" rx="4" fill="#55555d"/>
+          <rect x="78" y="162" width="44" height="8" rx="4" fill="#3a3a40"/>
+          <!-- split node -->
+          <circle cx="218" cy="150" r="8" fill="#a1a1a6"/>
+          <line x1="162" y1="150" x2="210" y2="150" stroke="#6e6e73" stroke-width="3"/>
+          <!-- branch: normal output (down) -->
+          <path d="M218 158 C 218 196, 250 196, 282 196" stroke="#6e6e73" stroke-width="3" fill="none"/>
+          <rect x="290" y="182" width="52" height="28" rx="8" fill="#1d1d20" stroke="rgba(255,255,255,.12)"/>
+          <!-- branch: copy to Hydra (up, accent) -->
+          <path d="M218 142 C 218 104, 250 104, 282 104" stroke="#2997ff" stroke-width="3" fill="none"/>
+          <rect x="290" y="90" width="52" height="28" rx="8" fill="#16181a" stroke="rgba(41,151,255,.5)"/>
+          <circle cx="316" cy="104" r="6" fill="#2997ff"/>
+        </svg>
+      </div>
     </div>
   </section>
 
   <!-- Plugins -->
-  <section class="feature alt">
+  <section class="feature">
     <div class="wrap">
       <div class="copy reveal">
         <div class="eyebrow">VST3 channel strips</div>
         <h2>Plug‑ins in the signal path.</h2>
-        <p>Insert VST3 plug‑ins on any channel, with live editor windows. By default each strip runs crash‑isolated, so a misbehaving plug‑in can never take the audio down.</p>
+        <p>Insert VST3 plug‑ins on any channel, with live editor windows. By default each strip runs crash‑isolated, so a misbehaving plug‑in can never take the audio down. Plug‑ins load only when something is patched through them.</p>
       </div>
-      <div class="shot reveal"><img src="assets/shot-plugin.png" alt="A VST3 plug-in editor open over the Hydra grid"/></div>
+      <div class="art reveal">
+        <svg viewBox="0 0 400 300" role="img" aria-label="A signal path passing through two plug-in inserts">
+          <!-- signal line -->
+          <line x1="44" y1="170" x2="356" y2="170" stroke="#2997ff" stroke-width="3"/>
+          <circle cx="44" cy="170" r="7" fill="#2997ff"/>
+          <circle cx="356" cy="170" r="7" fill="#2997ff"/>
+          <!-- insert boxes -->
+          <rect x="120" y="146" width="56" height="48" rx="10" fill="#1d1d20" stroke="rgba(255,255,255,.14)"/>
+          <rect x="132" y="160" width="32" height="6" rx="3" fill="#55555d"/>
+          <rect x="132" y="172" width="22" height="6" rx="3" fill="#3a3a40"/>
+          <rect x="224" y="146" width="56" height="48" rx="10" fill="#1d1d20" stroke="rgba(255,255,255,.14)"/>
+          <rect x="236" y="160" width="32" height="6" rx="3" fill="#55555d"/>
+          <rect x="236" y="172" width="22" height="6" rx="3" fill="#3a3a40"/>
+          <!-- floating editor window -->
+          <rect x="150" y="66" width="150" height="62" rx="12" fill="#16181a" stroke="rgba(41,151,255,.45)"/>
+          <circle cx="166" cy="82" r="3.5" fill="#6e6e73"/>
+          <g fill="#2997ff">
+            <rect x="166" y="98" width="8" height="18" rx="2"/>
+            <rect x="182" y="92" width="8" height="24" rx="2"/>
+            <rect x="198" y="102" width="8" height="14" rx="2"/>
+            <rect x="214" y="88" width="8" height="28" rx="2"/>
+            <rect x="230" y="100" width="8" height="16" rx="2"/>
+            <rect x="246" y="94" width="8" height="22" rx="2"/>
+            <rect x="262" y="104" width="8" height="12" rx="2"/>
+            <rect x="278" y="98" width="8" height="18" rx="2"/>
+          </g>
+        </svg>
+      </div>
     </div>
   </section>
 
   <!-- Network -->
-  <section class="feature">
+  <section class="feature alt">
     <div class="wrap">
       <div class="copy reveal">
         <div class="eyebrow">Audio over IP</div>
@@ -194,7 +396,7 @@
         <p>AES67 (including Dante® devices in AES67 mode), NDI® and OSC — send and receive audio and control over the wire. Flag any bridge to transmit, and it appears on the network.</p>
       </div>
       <div class="art reveal">
-        <svg viewBox="0 0 400 300" aria-hidden="true">
+        <svg viewBox="0 0 400 300" role="img" aria-label="A node broadcasting audio across the network">
           <circle cx="200" cy="150" r="14" fill="#2997ff"/>
           <g fill="none" stroke="rgba(41,151,255,.5)" stroke-width="3">
             <circle cx="200" cy="150" r="46"/><circle cx="200" cy="150" r="84"/><circle cx="200" cy="150" r="122"/>
@@ -206,14 +408,31 @@
   </section>
 
   <!-- One app / menu bar -->
-  <section class="feature alt">
+  <section class="feature">
     <div class="wrap">
       <div class="copy reveal">
         <div class="eyebrow">Built for the Mac</div>
         <h2>One app. Five languages.</h2>
         <p>Hydra runs as a single process — one icon in the Dock, no background daemon. It lives in the menu bar, follows your Mac’s accent colour, and speaks English, Português, Español, Français, Deutsch and Italiano.</p>
       </div>
-      <div class="shot reveal"><img src="assets/shot-menubar.png" alt="Hydra's menu bar panel showing status"/></div>
+      <div class="art reveal">
+        <svg viewBox="0 0 400 300" role="img" aria-label="Hydra's compact menu bar panel">
+          <rect x="96" y="70" width="208" height="160" rx="18" fill="#1b1b1e" stroke="rgba(255,255,255,.12)"/>
+          <!-- header -->
+          <circle cx="120" cy="98" r="7" fill="#2997ff"/>
+          <rect x="136" y="93" width="80" height="9" rx="4" fill="#6e6e73"/>
+          <line x1="112" y1="118" x2="288" y2="118" stroke="rgba(255,255,255,.08)"/>
+          <!-- status rows -->
+          <g>
+            <circle cx="120" cy="142" r="5" fill="#34c759"/>
+            <rect x="136" y="138" width="96" height="8" rx="4" fill="#4a4a52"/>
+            <circle cx="120" cy="168" r="5" fill="#34c759"/>
+            <rect x="136" y="164" width="76" height="8" rx="4" fill="#4a4a52"/>
+            <circle cx="120" cy="194" r="5" fill="#6e6e73"/>
+            <rect x="136" y="190" width="108" height="8" rx="4" fill="#3a3a40"/>
+          </g>
+        </svg>
+      </div>
     </div>
   </section>
 
@@ -225,10 +444,10 @@
     <h2 class="reveal">Everything in one window.</h2>
     <div class="grid3">
       <div class="card reveal"><h3>Patch bay</h3><p>Eight bridges, physical devices and captured apps in one Dante‑style grid.</p></div>
+      <div class="card reveal"><h3>Capture flows</h3><p>Flux taps a device's output and routes it into Hydra, continuously.</p></div>
       <div class="card reveal"><h3>Per‑app capture</h3><p>Core Audio process taps — route a single app without touching the rest.</p></div>
       <div class="card reveal"><h3>VST3</h3><p>Inserts with live editors, crash‑isolated by default.</p></div>
       <div class="card reveal"><h3>Network</h3><p>AES67 / Dante, NDI and OSC in and out.</p></div>
-      <div class="card reveal"><h3>Scenes &amp; recording</h3><p>Snapshot the whole matrix; record any output to WAV.</p></div>
       <div class="card reveal"><h3>Open source</h3><p>GPL‑3.0. Verified, self‑contained in‑app updates.</p></div>
     </div>
   </div>
@@ -243,7 +462,7 @@
       <a class="btn" href="https://github.com/sbacaro/Hydra-Soundcard/releases/latest">Download for macOS</a>
       <a class="btn ghost" href="https://github.com/sbacaro/Hydra-Soundcard/blob/main/CHANGELOG.md">Release notes</a>
     </div>
-    <div class="meta" style="margin-top:18px;color:var(--ink-3);font-size:13px">Version 1.0.7 · macOS 26 (Tahoe) · Apple Silicon &amp; Intel</div>
+    <div class="meta" style="margin-top:18px;color:var(--ink-3);font-size:13px">Version 1.0.8 · macOS 26 (Tahoe) · Apple Silicon &amp; Intel</div>
   </div>
 </section>
 

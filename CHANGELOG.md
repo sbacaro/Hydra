@@ -7,9 +7,8 @@ All notable changes to Hydra are documented here.
 ### Capture
 - **Flux — a new view for capture flows.** Alongside Grid and List, the toolbar now
   has a third view, **Flux**, for Audio-Hijack-style capture. A flow taps a device's
-  **output** — a Pro Tools bus, the audio an app plays to a bridge, anything reaching
-  a device — and routes it into Hydra, continuously, **without changing your system
-  output**. Each flow is a signal-chain card you edit in place: choose the capture
+  **output** — whatever any app is playing to it — and routes it into Hydra,
+  continuously, **without changing your system output**. Each flow is a signal-chain card you edit in place: choose the capture
   device and channels, pick where it lands. Selecting a flow opens its **Transmitter,
   Receiver and Connection** in the same channel-strip inspector as the grid, so
   inserts (plug-ins) and level work exactly as they do everywhere else. Flux stays
