@@ -33,8 +33,8 @@ visual matrix. Per‑app capture, capture flows, VST3 in the signal path, AES67
 a customized [BlackHole](https://github.com/ExistentialAudio/BlackHole) driver (see
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)).
 
-Current version: **1.0.8** · Requires **macOS 26 (Tahoe)** · Full design notes in
-[`PROJETO_HYDRA_FUNDACAO.md`](docs/PROJETO_HYDRA_FUNDACAO.md).
+Current version: **1.0.8** · Requires **macOS 26 (Tahoe)** · Architecture overview in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Features
 
@@ -201,7 +201,8 @@ Settings, matrix, scenes, labels and channel strips persist under
 
 - **Issues:** https://github.com/sbacaro/Hydra-Soundcard/issues
 - **Discussions:** https://github.com/sbacaro/Hydra-Soundcard/discussions
-- **Documentation:** [`PROJETO_HYDRA_FUNDACAO.md`](docs/PROJETO_HYDRA_FUNDACAO.md) — complete architecture
+- **Architecture:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- **Build & testing:** [`docs/BUILD.md`](docs/BUILD.md) · [`docs/TESTING.md`](docs/TESTING.md)
 - **Changelog:** [`CHANGELOG.md`](CHANGELOG.md)
 
 ## License
