@@ -333,7 +333,10 @@ struct GridView: View {
 
             Divider()
 
-            if rowItems.isEmpty && colItems.isEmpty {
+            if viewMode == "flux" {
+                FluxView(selection: $selection)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if rowItems.isEmpty && colItems.isEmpty {
                 emptyState
             } else if viewMode == "list" {
                 DeviceViewPatch(
@@ -365,6 +368,33 @@ struct GridView: View {
 
     private func controlBar(rows: [AxisItem], cols: [AxisItem]) -> some View {
         HStack(spacing: 8) {
+            // Grid/List are the channel-matrix views; Flux is a separate tool
+            // (capture flows), so it sits apart — its own button after a divider.
+            Picker("View", selection: $viewMode) {
+                Image(systemName: "square.grid.3x3").tag("grid")
+                    .help("Grid — every source × destination")
+                Image(systemName: "list.bullet").tag("list")
+                    .help("List — pick sources per destination, Dante Controller style")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 72)
+
+            Divider().frame(height: 16).padding(.horizontal, 2)
+
+            Button { viewMode = "flux" } label: {
+                Label("Flux", systemImage: "point.3.connected.trianglepath.dotted")
+            }
+            .buttonStyle(.bordered)
+            .tint(viewMode == "flux" ? .accentColor : nil)
+            .help("Flux — capture flows (a separate tool from the channel grid)")
+
+            // Flux belongs with the view switcher on the left; the grid actions
+            // (Groups, Clear…) are pushed to the right.
+            Spacer()
+
+            // Grid/List-only controls — hidden in Flux (which has its own layout).
+            if viewMode != "flux" {
             // Groups toggle
             Button {
                 groupChannels.toggle()
@@ -396,18 +426,9 @@ struct GridView: View {
                 .buttonStyle(.bordered)
                 .help(allCollapsed ? "Expand every device/group" : "Collapse every device/group back to its header")
             }
+            } // end grid/list-only controls
 
-            // View mode picker
-            Picker("View", selection: $viewMode) {
-                Image(systemName: "square.grid.3x3").tag("grid")
-                    .help("Grid — every source × destination")
-                Image(systemName: "list.bullet").tag("list")
-                    .help("List — pick sources per destination, Dante Controller style")
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 72)
-
+            if viewMode != "flux" {
             // Remove selection
             if !selectedCells.isEmpty {
                 let patched = selectedCells.filter {
@@ -451,8 +472,7 @@ struct GridView: View {
             } message: {
                 Text("Only connections between channels currently visible in the grid are removed.")
             }
-
-            Spacer()
+            } // end grid/list-only trailing controls
         }
     }
 

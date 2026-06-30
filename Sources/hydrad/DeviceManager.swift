@@ -19,6 +19,12 @@ final class DeviceIO {
     let inChannels: Int
     let outChannels: Int
     let sampleRate: Double
+    /// Capture the input WITHOUT driving the output — the engine opens an
+    /// input-only IOProc (disables this proc's output streams). Set for a device a
+    /// capture flow reads as its source: a loopback/bridge device (e.g. "Pro Tools
+    /// Audio Bridge") goes silent if a second client also writes its output, so we
+    /// stay a pure capture client — exactly what Audio Hijack does.
+    let captureInputOnly: Bool
     /// Grid node id. Generic physical devices use `dev:<uid>`; Hydra Audio
     /// Bridges pass an explicit `bridge:<id>` so they read as first-class nodes.
     private let nodeIDOverride: String?
@@ -39,7 +45,8 @@ final class DeviceIO {
 
     init(uid: String, name: String, deviceID: AudioObjectID,
          inChannels: Int, outChannels: Int,
-         sampleRate: Double, engineRate: Double, nodeID: String? = nil) {
+         sampleRate: Double, engineRate: Double, nodeID: String? = nil,
+         captureInputOnly: Bool = false) {
         self.uid = uid
         self.name = name
         self.deviceID = deviceID
@@ -47,6 +54,7 @@ final class DeviceIO {
         self.outChannels = outChannels
         self.sampleRate = sampleRate
         self.nodeIDOverride = nodeID
+        self.captureInputOnly = captureInputOnly
 
         if inChannels > 0 {
             inRing = ChannelRing(channels: inChannels,
@@ -85,6 +93,15 @@ final class DeviceIO {
         let outScratch = self.procOutScratch
         let inChans = self.inChannels
         let outChans = self.outChannels
+        // Input-only: never touch the device's output (don't even write silence) —
+        // combined with disabling this proc's output streams below, the engine is a
+        // pure capture client, like Audio Hijack.
+        let inputOnly = self.captureInputOnly
+        // Diagnostic (capture devices only): log the input level every ~2 s so we
+        // can see whether the device is actually delivering audio to Hydra.
+        let diagName = self.name
+        var diagFrames = 0
+        var diagPeak: Float = 0
 
         let status = AudioDeviceCreateIOProcIDWithBlock(&pid, deviceID, nil) { _, inputData, _, outputData, _ in
             // Device clock domain. Capture: flatten → ring.
@@ -95,8 +112,21 @@ final class DeviceIO {
                                              maxFrames: Hydra.maxIOFrames)
                 if frames > 0 {
                     inRing.write(from: inScratch, frames: frames)
+                    if inputOnly {
+                        let n = frames * inChans
+                        var p: Float = 0
+                        for k in 0..<n { let v = abs(inScratch[k]); if v > p { p = v } }
+                        if p > diagPeak { diagPeak = p }
+                        diagFrames += frames
+                        if diagFrames >= 96_000 {
+                            let db = 20 * log10(max(diagPeak, 1e-7))
+                            log(String(format: "Capture \"%@\": input %.1f dBFS", diagName, db))
+                            diagFrames = 0; diagPeak = 0
+                        }
+                    }
                 }
             }
+            guard !inputOnly else { return }
             // Playback: ring (resampled to this device's clock) → ABL.
             let outList = UnsafeMutableAudioBufferListPointer(outputData)
             for buffer in outList {
@@ -117,13 +147,18 @@ final class DeviceIO {
             log("Device \"\(name)\": IOProc creation failed (\(status))")
             return false
         }
+        // Make this proc an input-only client so our silence never mixes into (and,
+        // on some loopback devices, erases) what another app feeds the input.
+        if captureInputOnly {
+            Self.setOutputStreamsDisabled(deviceID: deviceID, proc: pid)
+        }
         guard AudioDeviceStart(deviceID, pid) == noErr else {
             log("Device \"\(name)\": AudioDeviceStart failed")
             AudioDeviceDestroyIOProcID(deviceID, pid)
             return false
         }
         procID = pid
-        log("Device attached: \"\(name)\" — \(inChannels) in / \(outChannels) out @ \(Int(sampleRate)) Hz")
+        log("Device attached: \"\(name)\" — \(inChannels) in / \(outChannels) out @ \(Int(sampleRate)) Hz\(captureInputOnly ? " (input-only capture)" : "")")
         EventCenter.shared.emit(.resourceRestored, "\(name) connected — patch re-bound.")
         return true
     }
@@ -136,17 +171,60 @@ final class DeviceIO {
         log("Device detached: \"\(name)\"")
         EventCenter.shared.emit(.resourceLost, "\(name) disconnected — its patch will re-bind when it returns.")
     }
+
+    /// Turn OFF every output stream for `proc` via kAudioDevicePropertyIOProcStreamUsage,
+    /// so this IOProc is an input-only client and never contributes to the device's
+    /// output mix. Struct: { void* mIOProc; UInt32 mNumberStreams; UInt32 mStreamIsOn[]; }.
+    /// IMPORTANT: the struct's `mIOProc` identifies which IOProc is being queried/set,
+    /// so it MUST be filled in before BOTH the Get and the Set — otherwise the call
+    /// silently no-ops and the engine stays an output client (clobbering loopbacks).
+    private static func setOutputStreamsDisabled(deviceID: AudioObjectID, proc: AudioDeviceIOProcID) {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyIOProcStreamUsage,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(deviceID, &addr, 0, nil, &size) == noErr, size > 0 else { return }
+        let raw = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: MemoryLayout<UInt>.alignment)
+        defer { raw.deallocate() }
+        let procPtr = unsafeBitCast(proc, to: UnsafeMutableRawPointer?.self)
+        // Identify the proc BEFORE querying its current stream usage.
+        raw.assumingMemoryBound(to: UnsafeMutableRawPointer?.self).pointee = procPtr
+        guard AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, raw) == noErr else {
+            log("Device input-only: could not read IOProc stream usage")
+            return
+        }
+        // Re-assert the proc (the Get may have cleared it), then turn every output stream off.
+        raw.assumingMemoryBound(to: UnsafeMutableRawPointer?.self).pointee = procPtr
+        let countOffset = MemoryLayout<UnsafeMutableRawPointer?>.stride
+        let n = raw.load(fromByteOffset: countOffset, as: UInt32.self)
+        let flags = raw.advanced(by: countOffset + MemoryLayout<UInt32>.stride)
+                       .assumingMemoryBound(to: UInt32.self)
+        for i in 0..<Int(n) { flags[i] = 0 }
+        let result = AudioObjectSetPropertyData(deviceID, &addr, 0, nil, size, raw)
+        if result != noErr {
+            log("Device input-only: could not disable output streams (\(result)) — capture may still drive output")
+        } else {
+            log("Device input-only: disabled \(n) output stream(s) for capture IOProc")
+        }
+    }
 }
 
 extension DeviceIO: EngineTap {}
 
 // MARK: - DeviceManager
 
-final class DeviceManager {
+// @unchecked Sendable: all mutable state is confined to the serial `queue`
+// (matches BridgeManager). Lets the queue.async capture self without a warning.
+final class DeviceManager: @unchecked Sendable {
 
     private let store: MatrixStore
     private let queue = DispatchQueue(label: "hydra.devices")
     private var usedUIDs: Set<String>
+    /// Device UIDs a capture flow reads as a SOURCE — opened input-only (we don't
+    /// drive their output) so loopback/bridge devices aren't disturbed. Driven by
+    /// RouteManager; does not change behaviour for any other device.
+    private var captureOnlyUIDs: Set<String> = []
     private var active: [String: DeviceIO] = [:]
     /// Called (on the manager queue) after every refresh with the fresh
     /// device list — broadcast hook. Receives the list directly so the
@@ -189,6 +267,16 @@ final class DeviceManager {
                 try? data.write(to: Self.persistURL, options: .atomic)
             }
             refreshLocked()
+        }
+    }
+
+    /// Devices that capture flows read as a source — captured input-only. When the
+    /// set changes, re-open the affected IOProcs in the right mode.
+    func setCaptureOnly(_ uids: Set<String>) {
+        queue.async { [weak self] in
+            guard let self, uids != self.captureOnlyUIDs else { return }
+            self.captureOnlyUIDs = uids
+            self.refreshLocked()
         }
     }
 
@@ -254,17 +342,27 @@ final class DeviceManager {
             .map(BackplaneProbe.nominalSampleRate) ?? Hydra.defaultSampleRate
         let wanted = present.filter { usedUIDs.contains($0.uid) }
         let wantedUIDs = Set(wanted.map(\.uid))
+        // A device is opened input-only only when a capture flow uses it as a
+        // source AND it actually has an input to capture.
+        func inputOnly(_ dev: Present) -> Bool {
+            captureOnlyUIDs.contains(dev.uid) && dev.inChannels > 0
+        }
 
-        // Detach: no longer wanted or unplugged.
-        for (uid, io) in active where !wantedUIDs.contains(uid) {
-            io.stop()
-            active.removeValue(forKey: uid)
+        // Detach: no longer wanted, unplugged, OR its input-only mode flipped
+        // (a flow started/stopped using it as a source) — rebuild the IOProc.
+        for (uid, io) in active {
+            let desiredInputOnly = present.first { $0.uid == uid }.map(inputOnly) ?? io.captureInputOnly
+            if !wantedUIDs.contains(uid) || io.captureInputOnly != desiredInputOnly {
+                io.stop()
+                active.removeValue(forKey: uid)
+            }
         }
         // Attach new ones.
         for dev in wanted where active[dev.uid] == nil {
             let io = DeviceIO(uid: dev.uid, name: dev.name, deviceID: dev.id,
                               inChannels: dev.inChannels, outChannels: dev.outChannels,
-                              sampleRate: dev.sampleRate, engineRate: engineRate)
+                              sampleRate: dev.sampleRate, engineRate: engineRate,
+                              captureInputOnly: inputOnly(dev))
             if io.start() {
                 active[dev.uid] = io
             }

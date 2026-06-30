@@ -88,6 +88,7 @@ final class DaemonContext {
     let interfaceStore = InterfaceStore()
     let bridgeManager: BridgeManager
     let surfaceManager: SurfaceManager
+    let routeManager: RouteManager
 
     /// Set in `start()` once the socket is open.
     var server: WebSocketServer!
@@ -108,6 +109,7 @@ final class DaemonContext {
         aes67TxManager = Aes67TxManager(store: store)
         bridgeManager = BridgeManager(store: store)
         surfaceManager = SurfaceManager()
+        routeManager = RouteManager(store: store, devices: deviceManager, bridges: bridgeManager)
     }
 
     // MARK: - Status helpers
@@ -226,7 +228,12 @@ final class DaemonContext {
         }
 
         deviceManager.onChange = { [weak self] infos in
-            Task { @MainActor in self?.server.broadcast(.devices(DevicesPayload(devices: infos))) }
+            Task { @MainActor in
+                guard let self else { return }
+                self.server.broadcast(.devices(DevicesPayload(devices: infos)))
+                // Let strips drop/reload plugins as their devices come and go.
+                self.stripManager.setPresentDevices(Set(infos.filter { $0.present }.map(\.nodeID)))
+            }
         }
         deviceManager.startMonitoring()
 
@@ -286,10 +293,22 @@ final class DaemonContext {
         store.onBridgeUsage = { [weak self] ids in
             self?.bridgeManager.setUsedBridges(ids)
         }
+        // Lazy plugin load: when the connection set changes, let strips instantiate
+        // their plugins only once something is patched through them.
+        store.onConnectionsChanged = { [weak self] in
+            self?.stripManager.recheckConnectivity()
+        }
         bridgeManager.start()
         // The persisted matrix loaded before the hook was wired — publish its
         // patched-bridge set now so those bridges attach.
         store.publishBridgeUsage()
+
+        // Capture flows (Audio-Hijack-style): broadcast state, then apply the
+        // persisted flows now that devices/bridges are up.
+        routeManager.onChange = { [weak self] flows in
+            Task { @MainActor in self?.server.broadcast(.flows(FlowsPayload(flows: flows))) }
+        }
+        routeManager.start()
 
         // OSC remote control: scenes + recordings, addressable by name.
         oscServer.onMessage = { [weak self] message in Task { @MainActor in
@@ -339,6 +358,9 @@ final class DaemonContext {
             }
         }
         stripManager.start()
+        // Seed the present-device set so currently-connected devices' strips load
+        // now; absent-device strips stay dormant until their device returns.
+        stripManager.setPresentDevices(Set(deviceManager.infos().filter { $0.present }.map(\.nodeID)))
 
         PtpClock.shared.onChange = { [weak self] status in
             Task { @MainActor in

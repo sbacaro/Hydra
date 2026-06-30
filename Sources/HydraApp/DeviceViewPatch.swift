@@ -411,6 +411,9 @@ struct DeviceViewPatch: View {
         var seen = Set<String>()
         return client.connections
             .filter { $0.destination == destination.point }
+            // Capture-flow sources (captap:…) belong to Flux, not the channel grid —
+            // hide them here so flux routes don't leak into the Grid/List views.
+            .filter { Hydra.captureTapUID(fromNodeID: $0.source.nodeID) == nil }
             .compactMap { conn -> GridEntry? in
                 let key = "\(conn.source.nodeID):\(conn.source.channelIndex)"
                 // Resolve to the visible lane (handles stereo lanes), else a

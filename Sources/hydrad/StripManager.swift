@@ -269,6 +269,10 @@ final class StripManager: @unchecked Sendable {
     private var customRoot = ""
     private var strips: [String: StripInfo] = [:]   // key → strip
     private var active: [UUID: ChainTap] = [:]      // strip id → tap
+    /// Node IDs of currently-present physical devices. A device strip's plugins
+    /// are NOT instantiated while its device is absent (saves CPU + avoids boot
+    /// XRUNs); they load when the device returns. Fed from DeviceManager changes.
+    private var presentDeviceNodes: Set<String> = []
     /// One shared out-of-process plugin host for ALL isolated chains (so every
     /// plugin editor lives in a single process — one window, one Dock icon).
     private let sharedHost: SharedPluginHost?
@@ -462,6 +466,36 @@ final class StripManager: @unchecked Sendable {
             persistLocked()
             rebuildTapsLocked()
             onChange?(vstPayloadLocked(), stripsPayload2Locked())
+        }
+    }
+
+    /// MatrixStore → a connection was added/removed. Re-evaluate which strips are
+    /// patched and lazily load any newly-connected ones. Async (not sync) so it
+    /// never re-enters the store's lock from inside its change notification.
+    func recheckConnectivity() {
+        queue.async { [weak self] in self?.rebuildTapsLocked() }
+    }
+
+    /// True if any connection is routed through this strip's channel(s) on its side.
+    private func stripIsConnected(_ strip: StripInfo, in conns: [Connection]) -> Bool {
+        let chans: Set<Int> = strip.stereo ? [strip.channelIndex, strip.channelIndex + 1]
+                                           : [strip.channelIndex]
+        return conns.contains { c in
+            switch strip.side {
+            case .source:      return c.source.nodeID == strip.nodeID && chans.contains(c.source.channelIndex)
+            case .destination: return c.destination.nodeID == strip.nodeID && chans.contains(c.destination.channelIndex)
+            }
+        }
+    }
+
+    /// DeviceManager → the set of currently-present physical-device node IDs.
+    /// Rebuilds the taps so an absent device's strip drops its plugins and a
+    /// returning device's strip reloads them.
+    func setPresentDevices(_ nodes: Set<String>) {
+        queue.sync {
+            guard presentDeviceNodes != nodes else { return }
+            presentDeviceNodes = nodes
+            rebuildTapsLocked()
         }
     }
 
@@ -749,9 +783,24 @@ final class StripManager: @unchecked Sendable {
         let engineRate = BackplaneProbe.backplaneDeviceID()
             .map(BackplaneProbe.nominalSampleRate) ?? Hydra.defaultSampleRate
 
+        let allConns = store.allConnections()
         var next: [UUID: ChainTap] = [:]
         var routes: [StripRoute] = []
         for strip in strips.values where !strip.inserts.isEmpty {
+            // A physical-device strip whose device is absent: don't spin up its
+            // plugins (saves CPU, avoids boot XRUNs). It reloads when the device
+            // returns (DeviceManager change → setPresentDevices → rebuild). Bridge,
+            // capture-tap and backplane strips aren't device-gated.
+            if Hydra.deviceUID(fromNodeID: strip.nodeID) != nil,
+               !presentDeviceNodes.contains(strip.nodeID) {
+                continue
+            }
+            // Lazy load: don't instantiate a strip's plugins until something is
+            // patched through it. Once loaded it stays (re-uses active[id]) — so a
+            // disconnect doesn't churn the host; a fresh connection loads it.
+            if active[strip.id] == nil, !stripIsConnected(strip, in: allConns) {
+                continue
+            }
             let sideTag = strip.side == .destination ? " RX" : ""
             let chainInfo = VSTChainInfo(id: strip.id,
                                          name: "\(strip.nodeID):\(strip.channelIndex + 1)\(sideTag)",

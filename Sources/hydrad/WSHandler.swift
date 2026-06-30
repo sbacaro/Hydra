@@ -157,6 +157,12 @@ func handleWSMessage(_ message: WSMessage, from connection: NWConnection) {
         bridgeManager.setRole(id: payload.id, role: payload.role)
     case .setBridgeNetworkTX(let payload):
         bridgeManager.setNetworkTX(id: payload.id, ndiTX: payload.ndiTX, aes67TX: payload.aes67TX)
+    case .getFlows:
+        server.send(.flows(routeManager.payload()), to: connection)
+    case .setFlow(let flow):
+        routeManager.setFlow(flow)
+    case .removeFlow(let payload):
+        routeManager.removeFlow(id: payload.id)
     case .getNdi:
         server.send(.ndi(ndiManager.payload()), to: connection)
     case .getRecordings:
@@ -187,7 +193,7 @@ func handleWSMessage(_ message: WSMessage, from connection: NWConnection) {
         surfaceManager.connectConsole(ip: payload.ip)
     case .status, .matrix, .levels, .labels, .scenes, .devices, .apps, .aes67,
          .vst, .strips, .events, .event, .config, .interfaces, .ndi, .recordings,
-         .modules, .bridges, .surface:
+         .modules, .bridges, .surface, .flows:
         break // daemon → app only; ignore if echoed
     }
 }

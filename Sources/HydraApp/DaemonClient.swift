@@ -80,6 +80,8 @@ final class DaemonClient {
         BridgeInfo(id: $0.id, name: $0.name, channels: $0.channels,
                    enabled: false, present: false)
     }
+    /// Audio-Hijack-style capture flows (source → output).
+    private(set) var flows: [FlowInfo] = []
     /// NDI runtime state + discovered network sources.
     private(set) var ndi = NdiPayload()
     private(set) var modules = ModulesPayload()
@@ -357,6 +359,24 @@ final class DaemonClient {
         send(.setBridgeNetworkTX(SetBridgeNetworkTXPayload(id: id, ndiTX: ndiTX, aes67TX: aes67TX)))
     }
 
+    // MARK: - Capture flows (Audio-Hijack-style)
+
+    /// Create or update a flow. Optimistic local echo; the daemon's .flows
+    /// broadcast is the source of truth.
+    func setFlow(_ flow: FlowInfo) {
+        if let i = flows.firstIndex(where: { $0.id == flow.id }) {
+            flows[i] = flow
+        } else {
+            flows.append(flow)
+        }
+        send(.setFlow(flow))
+    }
+
+    func removeFlow(_ id: UUID) {
+        flows.removeAll { $0.id == id }
+        send(.removeFlow(RemoveFlowPayload(id: id)))
+    }
+
     func setInterfaceNDI(_ id: UUID, enabled: Bool) {
         send(.setInterfaceNDI(InterfaceNDIPayload(id: id, enabled: enabled)))
     }
@@ -435,6 +455,7 @@ final class DaemonClient {
         receiveLoop(task)
         send(.getStatus)
         send(.getBridges)
+        send(.getFlows)
     }
 
     private func receiveLoop(_ task: URLSessionWebSocketTask) {
@@ -494,6 +515,8 @@ final class DaemonClient {
             interfaces = payload.interfaces
         case .bridges(let payload):
             bridges = payload.bridges
+        case .flows(let payload):
+            flows = payload.flows
         case .ndi(let payload):
             ndi = payload
         case .modules(let payload):
@@ -516,6 +539,7 @@ final class DaemonClient {
              .setPluginAvailable, .setPluginFavorite, .setConfig,
              .getInterfaces, .createInterface, .deleteInterface, .setInterfaceNDI, .setInterfaceAES67,
              .getBridges, .setBridgeEnabled, .setBridgeRole, .setBridgeNetworkTX,
+             .getFlows, .setFlow, .removeFlow,
              .getNdi, .subscribeNdi,
              .getModules, .subscribeModuleSource,
              .getRecordings, .startRecording, .stopRecording,

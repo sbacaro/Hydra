@@ -31,6 +31,10 @@ struct ContentView: View {
     @State private var showPalette   = false
     @State private var showWelcome   = false
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
+    // Mirrors GridView's view-mode toggle (same key) so we can clear the inspector
+    // when entering/leaving Flux — its selections (capture taps) don't belong to
+    // the Grid/List channel model. Grid↔List keep their shared selection.
+    @AppStorage("patchViewMode") private var viewMode = "grid"
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -56,6 +60,16 @@ struct ContentView: View {
         }
         .onChange(of: selectedBridge) { _, newValue in
             if newValue != nil { showInspector = true; selection = nil; channelFocus = nil }
+        }
+        // Switching to/from Flux clears the inspector — its capture-tap selections
+        // don't map onto the Grid/List channel model. Grid↔List keep their shared
+        // selection (same model), so only clear when Flux is one of the two sides.
+        .onChange(of: viewMode) { old, new in
+            if old == "flux" || new == "flux" {
+                selection = nil
+                channelFocus = nil
+                selectedBridge = nil
+            }
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {

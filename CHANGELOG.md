@@ -2,6 +2,29 @@
 
 All notable changes to Hydra are documented here.
 
+## [1.0.8] — 2026-06-29
+
+### Capture
+- **Flux — a new view for capture flows.** Alongside Grid and List, the toolbar now
+  has a third view, **Flux**, for Audio-Hijack-style capture. A flow taps a device's
+  **output** — a Pro Tools bus, the audio an app plays to a bridge, anything reaching
+  a device — and routes it into Hydra, continuously, **without changing your system
+  output**. Each flow is a signal-chain card you edit in place: choose the capture
+  device and channels, pick where it lands. Selecting a flow opens its **Transmitter,
+  Receiver and Connection** in the same channel-strip inspector as the grid, so
+  inserts (plug-ins) and level work exactly as they do everywhere else. Flux stays
+  separate from the channel grid — its routes don't show up in Grid/List, and
+  switching views clears the inspector — because the two are different tools.
+
+### Performance
+- **Plug-ins load only when they're needed.** A channel's inserts used to spin up at
+  launch whether or not anything was patched through them — loading heavy plug-in
+  hosts (and briefly stressing the audio engine) for nothing. Now a strip instantiates
+  its plug-ins only once a connection is routed through it, and a physical device's
+  inserts wait until that device is actually present. Faster startup, less CPU, and no
+  wasted hosts for an interface you've unplugged. (An unconnected plug-in already did
+  zero audio processing; now it doesn't even load.)
+
 ## [1.0.7] — 2026-06-28
 
 ### Plug-ins

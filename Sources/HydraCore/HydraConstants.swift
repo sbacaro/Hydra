@@ -6,7 +6,7 @@ import Foundation
 
 public enum Hydra {
     // MARK: Version
-    public static let version = "1.0.7"
+    public static let version = "1.0.8"
     /// Pre-release qualifier (e.g. "beta"). Empty for a stable release.
     public static let stage = ""
     public static var versionString: String {
@@ -205,6 +205,14 @@ public enum Hydra {
     public static func deviceNodeID(uid: String) -> String { "dev:\(uid)" }
     public static func deviceUID(fromNodeID nodeID: String) -> String? {
         nodeID.hasPrefix("dev:") ? String(nodeID.dropFirst(4)) : nil
+    }
+
+    /// Grid node ID for a capture flow that taps a DEVICE's OUTPUT (the audio apps
+    /// play to it) — the Audio-Hijack-style capture. Distinct from `dev:` so it can
+    /// coexist with the same device used normally.
+    public static func captureTapNodeID(uid: String) -> String { "captap:\(uid)" }
+    public static func captureTapUID(fromNodeID nodeID: String) -> String? {
+        nodeID.hasPrefix("captap:") ? String(nodeID.dropFirst(7)) : nil
     }
 
     // MARK: App capture (Phase 3)

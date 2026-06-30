@@ -901,6 +901,67 @@ public struct SetBridgeNetworkTXPayload: Codable, Sendable, Equatable {
     }
 }
 
+// MARK: - Capture Flows (Audio-Hijack-style routing)
+
+/// What a flow endpoint refers to. `deviceInput` captures a device's input
+/// channels; `app` captures an application's output; `bridge`/`device` are
+/// outputs (and `device` can also be a plain output target). `deviceOutput`
+/// (capturing what apps send TO a device's output) is reserved for a later stage.
+public enum FlowEndpointKind: String, Codable, Sendable, Equatable {
+    case deviceInput
+    case deviceOutput
+    case app
+    case bridge
+    case device
+}
+
+/// One end of a flow: a node + the channels it touches. The flow maps the
+/// source's `channels[i]` to the output's `channels[i]`, in order.
+public struct FlowEndpoint: Codable, Sendable, Equatable {
+    public var kind: FlowEndpointKind
+    /// Device UID, app bundle id (or "pid:N"), or bridge id.
+    public var id: String
+    /// Display name (snapshot, for the row when the node is absent).
+    public var name: String
+    /// 0-based channel indices this endpoint touches (e.g. [0, 1] for ch 1–2).
+    public var channels: [Int]
+    public init(kind: FlowEndpointKind, id: String, name: String, channels: [Int] = [0, 1]) {
+        self.kind = kind; self.id = id; self.name = name; self.channels = channels
+    }
+    /// Number of channels mapped.
+    public var count: Int { channels.count }
+}
+
+/// A continuous route: capture `source`, send it to `output`. Audio-Hijack-style.
+/// Volume lives on the matrix connection (edited in the channel-strip inspector,
+/// like every other connection), not on the flow itself.
+public struct FlowInfo: Codable, Sendable, Equatable, Identifiable {
+    public var id: UUID
+    public var name: String
+    public var source: FlowEndpoint
+    public var output: FlowEndpoint
+    /// User wants this flow live.
+    public var enabled: Bool
+    /// Engine confirms both ends are present and routed (daemon-set; ignored on upsert).
+    public var running: Bool
+
+    public init(id: UUID = UUID(), name: String, source: FlowEndpoint, output: FlowEndpoint,
+                enabled: Bool = true, running: Bool = false) {
+        self.id = id; self.name = name; self.source = source; self.output = output
+        self.enabled = enabled; self.running = running
+    }
+}
+
+public struct FlowsPayload: Codable, Sendable, Equatable {
+    public var flows: [FlowInfo]
+    public init(flows: [FlowInfo]) { self.flows = flows }
+}
+
+public struct RemoveFlowPayload: Codable, Sendable, Equatable {
+    public var id: UUID
+    public init(id: UUID) { self.id = id }
+}
+
 public struct BridgesPayload: Codable, Sendable, Equatable {
     public var bridges: [BridgeInfo]
     public init(bridges: [BridgeInfo]) { self.bridges = bridges }
@@ -1124,6 +1185,11 @@ public enum WSMessage: Codable, Sendable {
     case setBridgeEnabled(SetBridgeEnabledPayload)
     case setBridgeRole(SetBridgeRolePayload)
     case setBridgeNetworkTX(SetBridgeNetworkTXPayload)
+    // Capture flows (Audio-Hijack-style routing)
+    case getFlows
+    case flows(FlowsPayload)
+    case setFlow(FlowInfo)
+    case removeFlow(RemoveFlowPayload)
     // NDI
     case getNdi
     case ndi(NdiPayload)
@@ -1159,6 +1225,7 @@ public enum WSMessage: Codable, Sendable {
         case config, setConfig
         case getInterfaces, interfaces, createInterface, deleteInterface, setInterfaceNDI, setInterfaceAES67
         case getBridges, bridges, setBridgeEnabled, setBridgeRole, setBridgeNetworkTX
+        case getFlows, flows, setFlow, removeFlow
         case getNdi, ndi, subscribeNdi
         case getModules, modules, subscribeModuleSource
         case getRecordings, recordings, startRecording, stopRecording
@@ -1216,6 +1283,10 @@ public enum WSMessage: Codable, Sendable {
         case .setBridgeEnabled: self = .setBridgeEnabled(try c.decode(SetBridgeEnabledPayload.self, forKey: .payload))
         case .setBridgeRole:    self = .setBridgeRole(try c.decode(SetBridgeRolePayload.self, forKey: .payload))
         case .setBridgeNetworkTX: self = .setBridgeNetworkTX(try c.decode(SetBridgeNetworkTXPayload.self, forKey: .payload))
+        case .getFlows:         self = .getFlows
+        case .flows:            self = .flows(try c.decode(FlowsPayload.self, forKey: .payload))
+        case .setFlow:          self = .setFlow(try c.decode(FlowInfo.self, forKey: .payload))
+        case .removeFlow:       self = .removeFlow(try c.decode(RemoveFlowPayload.self, forKey: .payload))
         case .getNdi:           self = .getNdi
         case .ndi:              self = .ndi(try c.decode(NdiPayload.self, forKey: .payload))
         case .subscribeNdi:     self = .subscribeNdi(try c.decode(SubscribeNdiPayload.self, forKey: .payload))
@@ -1290,6 +1361,10 @@ public enum WSMessage: Codable, Sendable {
         case .setBridgeEnabled(let p):  try put(.setBridgeEnabled, p)
         case .setBridgeRole(let p):     try put(.setBridgeRole, p)
         case .setBridgeNetworkTX(let p): try put(.setBridgeNetworkTX, p)
+        case .getFlows:                 try put(.getFlows)
+        case .flows(let p):             try put(.flows, p)
+        case .setFlow(let p):           try put(.setFlow, p)
+        case .removeFlow(let p):        try put(.removeFlow, p)
         case .getNdi:                   try put(.getNdi)
         case .ndi(let p):               try put(.ndi, p)
         case .subscribeNdi(let p):      try put(.subscribeNdi, p)

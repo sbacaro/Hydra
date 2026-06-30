@@ -77,6 +77,7 @@ final class MatrixStore {
     private var netTaps: [EngineTap] = []
     private var ndiTaps: [EngineTap] = []
     private var moduleTaps: [EngineTap] = []   // generic module sources
+    private var captureTaps: [EngineTap] = []  // device-output taps (capture flows)
     private var poolTxTaps: [PoolTxTap] = []      // NDI senders
     private var recordTaps: [PoolTxTap] = []      // disk recorders
     private var aesTxTaps: [PoolTxTap] = []       // AES67 transmitters
@@ -87,9 +88,14 @@ final class MatrixStore {
     /// IOProcs/ASRC only for these, not for every enabled bridge.
     var onBridgeUsage: ((Set<String>) -> Void)?
     private var lastBridgeUsage: Set<String> = []
+    /// Fired when the SET of connection endpoints changes (not on gain/route-only
+    /// edits) so StripManager can lazily load a strip's plugins only once a
+    /// connection is routed through it. Mirrors `onBridgeUsage`.
+    var onConnectionsChanged: (() -> Void)?
+    private var lastConnSignature = 0
     /// Chains MUST come last: process() uses their buffer-index range to
     /// split mixing into pre-chain and post-chain passes.
-    private var taps: [EngineTap] { deviceTaps + bridgeTaps + appTaps + netTaps + ndiTaps + moduleTaps + chainTaps }
+    private var taps: [EngineTap] { deviceTaps + bridgeTaps + appTaps + netTaps + ndiTaps + moduleTaps + captureTaps + chainTaps }
     private var slotByID: [String: Int32] = [:]
     private var freeSlots: [Int32] = (0..<Int32(Hydra.maxConnections)).reversed()
     private var retained: [Snapshot] = []
@@ -249,6 +255,14 @@ final class MatrixStore {
     func setModuleTaps(_ newTaps: [EngineTap]) {
         control.sync {
             moduleTaps = newTaps
+            rebuildLocked()
+        }
+    }
+
+    /// New device-output capture-tap set (from RouteManager / capture flows).
+    func setCaptureTaps(_ newTaps: [EngineTap]) {
+        control.sync {
+            captureTaps = newTaps
             rebuildLocked()
         }
     }
@@ -524,6 +538,19 @@ final class MatrixStore {
         if usedBridges != lastBridgeUsage {
             lastBridgeUsage = usedBridges
             onBridgeUsage?(usedBridges)
+        }
+
+        // Notify when the connection ENDPOINTS change (ignore gain/route edits), so
+        // strips load their plugins only once something is patched through them.
+        var connHasher = Hasher()
+        for c in matrix.connections {
+            connHasher.combine(c.source.nodeID); connHasher.combine(c.source.channelIndex)
+            connHasher.combine(c.destination.nodeID); connHasher.combine(c.destination.channelIndex)
+        }
+        let connSig = connHasher.finalize()
+        if connSig != lastConnSignature {
+            lastConnSignature = connSig
+            onConnectionsChanged?()
         }
 
         // Split TX taps: node-sourced ones (bridge NDI/AES) read a tap's output;

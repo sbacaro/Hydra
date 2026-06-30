@@ -21,6 +21,9 @@ public enum PatchValidation {
         if Hydra.deviceUID(fromNodeID: point.nodeID) != nil {
             return (0..<Hydra.maxDeviceChannels).contains(point.channelIndex)
         }
+        if Hydra.captureTapUID(fromNodeID: point.nodeID) != nil {
+            return (0..<Hydra.maxDeviceChannels).contains(point.channelIndex)
+        }
         if Hydra.appKey(fromNodeID: point.nodeID) != nil {
             return (0..<Hydra.appTapChannels).contains(point.channelIndex)
         }
